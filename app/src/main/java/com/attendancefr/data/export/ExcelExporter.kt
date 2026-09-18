@@ -1,0 +1,204 @@
+package com.attendancefr.data.export
+
+import android.content.Context
+import com.attendancefr.data.local.dao.AttendanceDao
+import com.attendancefr.data.local.dao.StudentDao
+import com.attendancefr.data.local.entity.AttendanceRecordEntity
+import com.attendancefr.data.local.entity.StudentEntity
+import dagger.hilt.android.qualifiers.ApplicationContext
+import org.apache.poi.ss.usermodel.FillPatternType
+import org.apache.poi.ss.usermodel.IndexedColors
+import org.apache.poi.ss.usermodel.HorizontalAlignment
+import org.apache.poi.xssf.usermodel.XSSFWorkbook
+import org.apache.poi.xssf.usermodel.XSSFCellStyle
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class ExcelExporter @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val studentDao: StudentDao,
+    private val attendanceDao: AttendanceDao,
+) {
+    data class ExportRequest(
+        val fromDate: String,
+        val toDate: String,
+        val className: String?,
+    )
+
+    fun exportsDir(): File = File(context.filesDir, "exports").apply { mkdirs() }
+
+    suspend fun export(request: ExportRequest): File {
+        val students = if (request.className.isNullOrBlank()) {
+            studentDao.getAll()
+        } else {
+            studentDao.getByClass(request.className)
+        }
+        val studentMap = students.associateBy { it.id }
+        val records = attendanceDao.getInRange(request.fromDate, request.toDate)
+            .filter { studentMap.containsKey(it.studentId) }
+
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val classPart = request.className?.replace("\\s+".toRegex(), "_") ?: "all"
+        val file = File(exportsDir(), "attendance_${classPart}_${request.fromDate}_to_${request.toDate}_$stamp.xlsx")
+
+        XSSFWorkbook().use { wb ->
+            val headerStyle = (wb.createCellStyle() as XSSFCellStyle).apply {
+                fillForegroundColor = IndexedColors.DARK_BLUE.index
+                fillPattern = FillPatternType.SOLID_FOREGROUND
+                alignment = HorizontalAlignment.CENTER
+                val font = wb.createFont()
+                font.bold = true
+                font.color = IndexedColors.WHITE.index
+                setFont(font)
+            }
+            val presentStyle = (wb.createCellStyle() as XSSFCellStyle).apply {
+                fillForegroundColor = IndexedColors.LIGHT_GREEN.index
+                fillPattern = FillPatternType.SOLID_FOREGROUND
+            }
+            val absentStyle = (wb.createCellStyle() as XSSFCellStyle).apply {
+                fillForegroundColor = IndexedColors.ROSE.index
+                fillPattern = FillPatternType.SOLID_FOREGROUND
+            }
+            val lateStyle = (wb.createCellStyle() as XSSFCellStyle).apply {
+                fillForegroundColor = IndexedColors.LIGHT_YELLOW.index
+                fillPattern = FillPatternType.SOLID_FOREGROUND
+            }
+
+            writeDetailSheet(wb, students, records, studentMap, headerStyle, presentStyle, absentStyle, lateStyle)
+            writeSummarySheet(wb, students, records, studentMap, request, headerStyle)
+
+            FileOutputStream(file).use { wb.write(it) }
+        }
+        return file
+    }
+
+    private fun writeDetailSheet(
+        wb: XSSFWorkbook,
+        students: List<StudentEntity>,
+        records: List<AttendanceRecordEntity>,
+        studentMap: Map<Long, StudentEntity>,
+        headerStyle: XSSFCellStyle,
+        presentStyle: XSSFCellStyle,
+        absentStyle: XSSFCellStyle,
+        lateStyle: XSSFCellStyle,
+    ) {
+        val sheet = wb.createSheet("Records")
+        val headers = listOf(
+            "Student ID", "Name", "Class", "Date", "Time", "Status", "Match Confidence", "Marked By"
+        )
+        val headerRow = sheet.createRow(0)
+        headers.forEachIndexed { i, h ->
+            headerRow.createCell(i).apply {
+                setCellValue(h)
+                cellStyle = headerStyle
+            }
+        }
+
+        val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.US)
+        var rowIdx = 1
+        val sorted = records.sortedWith(compareBy({ it.date }, { studentMap[it.studentId]?.name.orEmpty() }))
+        for (rec in sorted) {
+            val s = studentMap[rec.studentId] ?: continue
+            val row = sheet.createRow(rowIdx++)
+            row.createCell(0).setCellValue(s.studentId)
+            row.createCell(1).setCellValue(s.name)
+            row.createCell(2).setCellValue(s.className)
+            row.createCell(3).setCellValue(rec.date)
+            row.createCell(4).setCellValue(timeFmt.format(Date(rec.timestamp)))
+            val statusCell = row.createCell(5)
+            statusCell.setCellValue(rec.status)
+            statusCell.cellStyle = when (rec.status) {
+                "Present" -> presentStyle
+                "Absent" -> absentStyle
+                "Late" -> lateStyle
+                else -> presentStyle
+            }
+            row.createCell(6).setCellValue(
+                rec.matchConfidence?.let { String.format(Locale.US, "%.3f", it) } ?: ""
+            )
+            row.createCell(7).setCellValue(if (rec.isManual) "Manual" else "Face match")
+        }
+
+        val datesWithRecords = records.map { it.date }.toSortedSet()
+        val recordedPairs = records.map { it.studentId to it.date }.toSet()
+        for (date in datesWithRecords) {
+            for (s in students) {
+                if ((s.id to date) in recordedPairs) continue
+                val row = sheet.createRow(rowIdx++)
+                row.createCell(0).setCellValue(s.studentId)
+                row.createCell(1).setCellValue(s.name)
+                row.createCell(2).setCellValue(s.className)
+                row.createCell(3).setCellValue(date)
+                row.createCell(4).setCellValue("")
+                val statusCell = row.createCell(5)
+                statusCell.setCellValue("Absent")
+                statusCell.cellStyle = absentStyle
+                row.createCell(6).setCellValue("")
+                row.createCell(7).setCellValue("Implied")
+            }
+        }
+
+        headers.indices.forEach { sheet.setColumnWidth(it, 18 * 256) }
+        sheet.setColumnWidth(1, 28 * 256)
+    }
+
+    private fun writeSummarySheet(
+        wb: XSSFWorkbook,
+        students: List<StudentEntity>,
+        records: List<AttendanceRecordEntity>,
+        studentMap: Map<Long, StudentEntity>,
+        request: ExportRequest,
+        headerStyle: XSSFCellStyle,
+    ) {
+        val sheet = wb.createSheet("Summary")
+        val title = sheet.createRow(0)
+        title.createCell(0).setCellValue(
+            "Attendance summary  ${request.fromDate} → ${request.toDate}" +
+                (request.className?.let { "  ·  $it" } ?: "  ·  All classes")
+        )
+
+        val headers = listOf(
+            "Student ID", "Name", "Class", "Present", "Late", "Absent (implied)", "Sessions", "Attendance rate %"
+        )
+        val headerRow = sheet.createRow(2)
+        headers.forEachIndexed { i, h ->
+            headerRow.createCell(i).apply {
+                setCellValue(h)
+                cellStyle = headerStyle
+            }
+        }
+
+        val datesWithRecords = records.map { it.date }.toSet()
+        val sessions = datesWithRecords.size.coerceAtLeast(1)
+        val byStudent = records.groupBy { it.studentId }
+
+        var rowIdx = 3
+        for (s in students.sortedBy { it.name.lowercase(Locale.US) }) {
+            val recs = byStudent[s.id].orEmpty()
+            val present = recs.count { it.status == "Present" || it.status == "ManualOverride" }
+            val late = recs.count { it.status == "Late" }
+            val explicitAbsent = recs.count { it.status == "Absent" }
+            val impliedAbsent = (sessions - recs.size).coerceAtLeast(0) + explicitAbsent
+            val attended = present + late
+            val rate = if (sessions == 0) 0.0 else 100.0 * attended / sessions
+
+            val row = sheet.createRow(rowIdx++)
+            row.createCell(0).setCellValue(s.studentId)
+            row.createCell(1).setCellValue(s.name)
+            row.createCell(2).setCellValue(s.className)
+            row.createCell(3).setCellValue(present.toDouble())
+            row.createCell(4).setCellValue(late.toDouble())
+            row.createCell(5).setCellValue(impliedAbsent.toDouble())
+            row.createCell(6).setCellValue(sessions.toDouble())
+            row.createCell(7).setCellValue(String.format(Locale.US, "%.1f", rate))
+        }
+        headers.indices.forEach { sheet.setColumnWidth(it, 20 * 256) }
+        sheet.setColumnWidth(1, 28 * 256)
+    }
+}

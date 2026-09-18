@@ -1,0 +1,5 @@
+AttendanceFR application code is provided for the AttendanceFR project.
+
+Third-party components remain under their own licenses, including but not limited to:
+AndroidX / Jetpack, Kotlin, Hilt, ML Kit, TensorFlow Lite, Apache POI, and the
+MobileFaceNet model weights (which you must obtain separately — see SETUP.md).

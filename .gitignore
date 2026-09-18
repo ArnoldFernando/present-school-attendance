@@ -1,0 +1,20 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Keystores and secrets - never commit
+*.jks
+*.keystore
+keystore.properties
+
+# Large ML models are fetched by the developer, not committed
+# (kept out of git to avoid bloating the repository).
+# Uncomment the next line if you prefer to keep models in the repo.
+# app/src/main/assets/*.tflite
