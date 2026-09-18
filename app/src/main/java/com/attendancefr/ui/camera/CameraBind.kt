@@ -49,3 +49,29 @@ fun ProcessCameraProvider.bindWithFallback(
         )
     }
 }
+
+/**
+ * Bind [useCases] to the requested camera selector, falling back to the back camera
+ * on devices / emulators that do not expose the requested lens.
+ */
+fun ProcessCameraProvider.bindWithSelector(
+    lifecycleOwner: LifecycleOwner,
+    cameraSelector: CameraSelector,
+    vararg useCases: UseCase,
+) {
+    unbindAll()
+    try {
+        bindToLifecycle(
+            lifecycleOwner,
+            cameraSelector,
+            *useCases,
+        )
+    } catch (_: Exception) {
+        unbindAll()
+        bindToLifecycle(
+            lifecycleOwner,
+            CameraSelector.DEFAULT_BACK_CAMERA,
+            *useCases,
+        )
+    }
+}

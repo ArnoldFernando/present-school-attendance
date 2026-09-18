@@ -24,7 +24,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
@@ -126,7 +125,8 @@ fun FaceCameraPreview(
                 }
         }
 
-        provider.bindWithFallback(lifecycleOwner, preview, analysis)
+        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+        provider.bindWithSelector(lifecycleOwner, selector, preview, analysis)
     }
 
     Box(modifier) {
@@ -137,6 +137,7 @@ fun FaceCameraPreview(
             frameHeight = frameH,
             color = overlayHintColor,
             modifier = Modifier.fillMaxSize(),
+            mirror = lensFacing == CameraSelector.LENS_FACING_FRONT,
         )
     }
 }
@@ -148,16 +149,24 @@ fun FaceOverlay(
     frameHeight: Int,
     color: Color,
     modifier: Modifier = Modifier,
+    mirror: Boolean = false,
 ) {
     Canvas(modifier) {
         if (frameWidth <= 0 || frameHeight <= 0) return@Canvas
         val sx = size.width / frameWidth
         val sy = size.height / frameHeight
         boxes.forEach { face ->
-            val l = face.box.left * sx
-            val t = face.box.top * sy
-            val w = face.box.width() * sx
-            val h = face.box.height() * sy
+            val rect = face.box
+            val left = if (mirror) frameWidth - rect.right else rect.left
+            val right = if (mirror) frameWidth - rect.left else rect.right
+            val top = rect.top
+            val bottom = rect.bottom
+
+            val l = left * sx
+            val t = top * sy
+            val w = (right - left) * sx
+            val h = (bottom - top) * sy
+
             val stroke = if (face.eyesOpen) color else Color(0xFFFBBF24)
             drawRect(
                 color = stroke,

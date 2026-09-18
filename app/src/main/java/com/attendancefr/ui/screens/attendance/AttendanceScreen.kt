@@ -1,6 +1,9 @@
 package com.attendancefr.ui.screens.attendance
 
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.view.ViewGroup
+import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.Preview
@@ -18,9 +21,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material.icons.automirrored.outlined.ListAlt
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.HelpOutline
-import androidx.compose.material.icons.outlined.ListAlt
+import androidx.compose.material.icons.outlined.FlipCameraAndroid
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
@@ -36,10 +40,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -49,27 +58,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.attendancefr.domain.model.MatchResult
 import com.attendancefr.ui.camera.DetectedFaceBox
 import com.attendancefr.ui.camera.FaceOverlay
 import com.attendancefr.ui.camera.awaitCameraProvider
-import com.attendancefr.ui.camera.bindWithFallback
+import com.attendancefr.ui.camera.bindWithSelector
 import com.attendancefr.ui.camera.takeBitmap
 import com.attendancefr.ui.components.CameraPermissionGate
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
-import android.media.ToneGenerator
-import android.media.AudioManager
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,85 +86,150 @@ fun AttendanceScreen(
     vm: AttendanceViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    
+    val snackbarHostState = remember { SnackbarHostState() }
+    var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
+
+    LaunchedEffect(state.lastResult) {
+        val msg = when (val r = state.lastResult) {
+            is MatchResult.Matched -> {
+                if (r.alreadyMarked) "Already marked: ${r.student.name}"
+                else "Success: ${r.student.name} is present"
+            }
+            is MatchResult.Unknown -> "Failed: Unknown face"
+            is MatchResult.NoFace -> "No face detected"
+            is MatchResult.MultipleFaces -> "Multiple faces detected"
+            is MatchResult.PoorQuality -> "Failed: ${r.reason}"
+            is MatchResult.Error -> "Error: ${r.message}"
+            null -> return@LaunchedEffect
+        }
+        snackbarHostState.showSnackbar(msg)
+    }
+
     LaunchedEffect(Unit) {
         vm.soundEvents.collect { event ->
-            when (event.type) {
-                SoundType.SUCCESS -> {
-                    val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
-                    tone.startTone(ToneGenerator.TONE_PROP_ACK, 250)
-                }
-                SoundType.FAILURE -> {
-                    val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
-                    tone.startTone(ToneGenerator.TONE_PROP_NACK, 400)
-                }
+            val toneType = when (event.type) {
+                SoundType.SUCCESS -> ToneGenerator.TONE_PROP_ACK
+                SoundType.FAILURE -> ToneGenerator.TONE_PROP_NACK
             }
+            val durationMs = when (event.type) {
+                SoundType.SUCCESS -> 250
+                SoundType.FAILURE -> 400
+            }
+            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 85)
+            tone.startTone(toneType, durationMs)
+            delay(durationMs + 50L)
+            tone.release()
         }
     }
-    CameraPermissionGate {
-        Column(Modifier.fillMaxSize()) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Take attendance", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                IconButton(onClick = { onManual(state.selectedClass) }) {
-                    Icon(Icons.Outlined.ListAlt, contentDescription = "Manual override")
-                }
-            }
-            Row(
-                Modifier.padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                ClassDropdown(
-                    classes = state.classes.map { it.name },
-                    selected = state.selectedClass,
-                    onSelect = vm::selectClass,
-                    modifier = Modifier.weight(1f),
-                )
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Auto", style = MaterialTheme.typography.labelSmall)
-                    Switch(checked = state.autoCapture, onCheckedChange = vm::setAutoCapture)
-                }
-            }
-            Text(
-                "${state.enrolledCount} faces enrolled  ·  threshold ${"%.2f".format(state.threshold)}  ·  ${vm.todayLabel()}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-            if (state.modelMissing) {
-                Text(
-                    "Model missing — capture will fail until mobile_face_net.tflite is in assets/. See SETUP.md.",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-            }
-            LiveCapture(
-                hint = state.hint,
-                busy = state.busy,
-                auto = state.autoCapture,
-                last = state.lastResult,
-                onCaptureBitmap = { bmp, auto -> vm.capture(bmp, fromAuto = auto) },
-            )
-            SessionStrip(state.sessionMarks)
-        }
 
-        val unknown = state.lastResult as? MatchResult.Unknown
-        if (unknown != null) {
-            UnknownFaceDialog(
-                closestName = unknown.closestStudent?.name,
-                confidence = unknown.confidence,
-                onDismiss = vm::dismissUnknown,
-                onManual = {
-                    vm.dismissUnknown()
-                    onManual(state.selectedClass)
-                },
-            )
+    CameraPermissionGate {
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Take attendance",
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Row {
+                        IconButton(
+                            onClick = {
+                                lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+                                    CameraSelector.LENS_FACING_FRONT
+                                } else {
+                                    CameraSelector.LENS_FACING_BACK
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.FlipCameraAndroid,
+                                contentDescription = "Toggle camera"
+                            )
+                        }
+                        IconButton(onClick = { onManual(state.selectedClass) }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.ListAlt,
+                                contentDescription = "Manual override"
+                            )
+                        }
+                    }
+                }
+                Row(
+                    Modifier.padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    ClassDropdown(
+                        classes = state.classes.map { it.name },
+                        selected = state.selectedClass,
+                        onSelect = vm::selectClass,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Auto", style = MaterialTheme.typography.labelSmall)
+                        Switch(checked = state.autoCapture, onCheckedChange = vm::setAutoCapture)
+                    }
+                }
+                Text(
+                    "${state.enrolledCount} faces enrolled  ·  threshold ${"%.2f".format(state.threshold)}  ·  ${vm.todayLabel()}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+                if (state.modelMissing) {
+                    Text(
+                        "Model missing — capture will fail until mobile_face_net.tflite is in assets/. See SETUP.md.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+                LiveCapture(
+                    hint = state.hint,
+                    busy = state.busy,
+                    auto = state.autoCapture,
+                    last = state.lastResult,
+                    lensFacing = lensFacing,
+                    onCaptureBitmap = { bmp, auto -> vm.capture(bmp, fromAuto = auto) },
+                )
+                SessionStrip(state.sessionMarks)
+            }
+
+            val unknown = state.lastResult as? MatchResult.Unknown
+            if (unknown != null) {
+                UnknownFaceDialog(
+                    closestName = unknown.closestStudent?.name,
+                    confidence = unknown.confidence,
+                    onDismiss = vm::dismissUnknown,
+                    onManual = {
+                        vm.dismissUnknown()
+                        onManual(state.selectedClass)
+                    },
+                )
+            }
+
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) { data ->
+                val msg = data.visuals.message
+                val isSuccess = msg.startsWith("Success") || msg.startsWith("Already marked")
+                val isError = msg.startsWith("Failed") || msg.startsWith("Error") || msg.startsWith("No face") || msg.startsWith("Multiple")
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = when {
+                        isSuccess -> Color(0xFF166534)
+                        isError -> Color(0xFF991B1B)
+                        else -> MaterialTheme.colorScheme.inverseSurface
+                    },
+                    contentColor = Color.White
+                )
+            }
         }
     }
 }
@@ -170,22 +243,37 @@ private fun ClassDropdown(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }, modifier = modifier) {
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = modifier
+    ) {
         OutlinedTextField(
             value = selected.ifBlank { "Select class" },
             onValueChange = {},
             readOnly = true,
             label = { Text("Class") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth(),
             singleLine = true,
         )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
             if (classes.isEmpty()) {
-                DropdownMenuItem(text = { Text("No classes yet — enroll a student first") }, onClick = { expanded = false })
+                DropdownMenuItem(
+                    text = { Text("No classes yet — enroll a student first") },
+                    onClick = { expanded = false }
+                )
             }
             classes.forEach { name ->
-                DropdownMenuItem(text = { Text(name) }, onClick = { onSelect(name); expanded = false })
+                DropdownMenuItem(
+                    text = { Text(name) },
+                    onClick = { onSelect(name); expanded = false }
+                )
             }
         }
     }
@@ -197,6 +285,7 @@ private fun LiveCapture(
     busy: Boolean,
     auto: Boolean,
     last: MatchResult?,
+    lensFacing: Int,
     onCaptureBitmap: (android.graphics.Bitmap, Boolean) -> Unit,
 ) {
     val context = LocalContext.current
@@ -206,7 +295,6 @@ private fun LiveCapture(
     var boxes by remember { mutableStateOf<List<DetectedFaceBox>>(emptyList()) }
     var frameW by remember { mutableStateOf(1) }
     var frameH by remember { mutableStateOf(1) }
-    var lastAutoFaceCount by remember { mutableStateOf(0) }
 
     val previewView = remember {
         PreviewView(context).apply {
@@ -236,12 +324,15 @@ private fun LiveCapture(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(lensFacing) {
         val provider = context.awaitCameraProvider()
-        val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+        val preview = Preview.Builder().build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
+        }
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
+        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         var inFlight = false
         analysis.setAnalyzer(analysisExecutor) { proxy ->
             if (inFlight) {
@@ -269,18 +360,34 @@ private fun LiveCapture(
                     proxy.close()
                 }
         }
-        provider.bindWithFallback(lifecycleOwner, preview, imageCapture, analysis)
+        provider.bindWithSelector(lifecycleOwner, selector, preview, imageCapture, analysis)
     }
 
-    // Auto-trigger when a single stable face is in frame.
-    LaunchedEffect(auto, boxes, busy) {
-        val count = boxes.size
-        if (auto && !busy && count == 1 && lastAutoFaceCount != 1) {
-            lastAutoFaceCount = 1
-            runCatching { imageCapture.takeBitmap(context) }
-                .onSuccess { onCaptureBitmap(it, true) }
+    val lastAutoTriggerMs = remember { mutableLongStateOf(0L) }
+    val previousFaceCount = remember { mutableIntStateOf(0) }
+    LaunchedEffect(auto) {
+        if (!auto) {
+            previousFaceCount.intValue = 0
+            return@LaunchedEffect
         }
-        if (count != 1) lastAutoFaceCount = count
+        while (isActive) {
+            delay(200)
+            if (busy) continue
+            val count = boxes.size
+            val now = System.currentTimeMillis()
+            val faceEntered = previousFaceCount.intValue == 0 && count == 1
+            val cooldownOk = now - lastAutoTriggerMs.longValue >= 2000
+            if (faceEntered && cooldownOk) {
+                lastAutoTriggerMs.longValue = now
+                val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
+                tone.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+                delay(150)
+                tone.release()
+                runCatching { imageCapture.takeBitmap(context) }
+                    .onSuccess { onCaptureBitmap(it, true) }
+            }
+            previousFaceCount.intValue = count
+        }
     }
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -297,22 +404,38 @@ private fun LiveCapture(
                 frameHeight = frameH,
                 color = overlayColor(last),
                 modifier = Modifier.fillMaxSize(),
+                mirror = lensFacing == CameraSelector.LENS_FACING_FRONT,
             )
             ResultBadge(last, Modifier.align(Alignment.TopCenter).padding(12.dp))
         }
         Spacer(Modifier.height(8.dp))
-        Text(hint, style = MaterialTheme.typography.bodyMedium)
+        val hintColor = when {
+            hint.startsWith("Present") -> Color(0xFF166534)
+            hint.startsWith("Already marked") -> Color(0xFF166534)
+            hint.startsWith("Unknown") -> Color(0xFF92400E)
+            hint.startsWith("Failed") || hint.startsWith("Error") || hint.startsWith("No face") || hint.startsWith("Multiple") -> Color(
+                0xFF991B1B
+            )
+            else -> MaterialTheme.colorScheme.onSurface
+        }
+        Text(
+            text = hint,
+            style = MaterialTheme.typography.bodyMedium,
+            color = hintColor
+        )
         Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = {
-                scope.launch {
-                    runCatching { imageCapture.takeBitmap(context) }
-                        .onSuccess { onCaptureBitmap(it, false) }
-                }
-            },
-            enabled = !busy,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "Matching…" else "Capture & match") }
+        if (!auto) {
+            Button(
+                onClick = {
+                    scope.launch {
+                        runCatching { imageCapture.takeBitmap(context) }
+                            .onSuccess { onCaptureBitmap(it, false) }
+                    }
+                },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (busy) "Matching…" else "Capture & match") }
+        }
     }
 }
 
@@ -320,7 +443,9 @@ private fun LiveCapture(
 private fun ResultBadge(last: MatchResult?, modifier: Modifier = Modifier) {
     val (label, color) = when (last) {
         is MatchResult.Matched ->
-            (if (last.alreadyMarked) "Already marked: ${last.student.name}" else "✓ ${last.student.name}") to Color(0xFF166534)
+            (if (last.alreadyMarked) "Already marked: ${last.student.name}" else "✓ ${last.student.name}") to Color(
+                0xFF166534
+            )
         is MatchResult.Unknown -> "Unknown face" to Color(0xFF92400E)
         is MatchResult.NoFace -> "No face" to Color(0xFF6B7280)
         is MatchResult.MultipleFaces -> "Multiple faces" to Color(0xFF92400E)
@@ -329,9 +454,12 @@ private fun ResultBadge(last: MatchResult?, modifier: Modifier = Modifier) {
         null -> return
     }
     Surface(modifier = modifier, color = color, shape = MaterialTheme.shapes.small) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Icon(
-                if (last is MatchResult.Matched) Icons.Outlined.CheckCircle else Icons.Outlined.HelpOutline,
+                imageVector = if (last is MatchResult.Matched) Icons.Outlined.CheckCircle else Icons.AutoMirrored.Outlined.HelpOutline,
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(16.dp),
@@ -375,7 +503,7 @@ private fun UnknownFaceDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Outlined.HelpOutline, contentDescription = null) },
+        icon = { Icon(Icons.AutoMirrored.Outlined.HelpOutline, contentDescription = null) },
         title = { Text("Unknown face") },
         text = {
             Text(
