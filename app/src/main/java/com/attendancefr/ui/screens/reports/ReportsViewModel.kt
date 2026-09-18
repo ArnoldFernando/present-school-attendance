@@ -1,5 +1,6 @@
 package com.attendancefr.ui.screens.reports
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.attendancefr.data.export.ExcelExporter
@@ -85,7 +86,8 @@ class ReportsViewModel @Inject constructor(
         records: List<AttendanceRecordEntity>,
         classes: List<ClassSection>,
         filt: Filters ->
-        val filteredStudents = studentList.filter { filt.classFilter == null || it.className == filt.classFilter }
+        val filteredStudents =
+            studentList.filter { filt.classFilter == null || it.className == filt.classFilter }
         val recs = records.filter { rec -> filteredStudents.any { it.id == rec.studentId } }
         val dates = recs.map { it.date }.toSet()
         val sessions = dates.size
@@ -110,14 +112,23 @@ class ReportsViewModel @Inject constructor(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReportsUiState())
 
-    fun onFilter(v: String?) { classFilter.value = v }
-    fun onFrom(v: String) { from.value = v }
-    fun onTo(v: String) { to.value = v }
+    fun onFilter(v: String?) {
+        classFilter.value = v
+    }
 
-    fun export() {
+    fun onFrom(v: String) {
+        from.value = v
+    }
+
+    fun onTo(v: String) {
+        to.value = v
+    }
+
+       fun export() {
         viewModelScope.launch {
             exporting.value = true
             error.value = null
+            lastExport.value = null
             runCatching {
                 exporter.export(
                     ExcelExporter.ExportRequest(
@@ -129,7 +140,7 @@ class ReportsViewModel @Inject constructor(
             }.onSuccess {
                 lastExport.value = it
             }.onFailure {
-                error.value = it.message
+                error.value = it.message ?: it::class.java.simpleName ?: "Export failed"
             }
             exporting.value = false
         }

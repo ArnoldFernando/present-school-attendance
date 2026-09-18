@@ -60,7 +60,6 @@ android {
     }
 
     compileOptions {
-        // Required by Apache POI on Android (java.time / some nio APIs).
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -129,12 +128,30 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     debugImplementation(libs.androidx.ui.tooling)
 
+
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
 
+
+    // Apache POI for Excel export — patched for Android API 24 compatibility
+    implementation(libs.poi.ooxml) {
+        exclude(group = "org.apache.poi", module = "poi")
+        // Do NOT exclude stax-api — Android API 24 needs it bundled
+        exclude(group = "xml-apis")
+    }
+    implementation(files(patchPoi.map { it.archiveFile }))
+
+    // StAX API — required by xmlbeans on Android (javax.xml.stream not in API 24 runtime)
+    implementation("javax.xml.stream:stax-api:1.0-2")
+
+
+    // Required by POI's XSSFWorkbook internally
+    implementation("org.apache.commons:commons-collections4:4.4")
+
     implementation(libs.mlkit.face.detection)
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     implementation(libs.tflite)
     implementation(libs.tflite.support)
@@ -145,16 +162,9 @@ dependencies {
 
     implementation(libs.androidx.datastore.preferences)
 
-        implementation(libs.poi.ooxml) {
-        exclude(group = "org.apache.poi", module = "poi")
-        exclude(group = "stax", module = "stax-api")
-        exclude(group = "xml-apis")
-    }
-     implementation(files(patchPoi.map { it.archiveFile }))
     // Quiet POI logging without log4j-core / log4j-api MethodHandle issues on Android 24.
     implementation("org.slf4j:slf4j-api:1.7.36")
     implementation("org.slf4j:slf4j-nop:1.7.36")
-    coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
