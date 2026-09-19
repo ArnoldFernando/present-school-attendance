@@ -160,16 +160,21 @@ class AttendanceViewModel @Inject constructor(
         return try {
             val scaled = ImageUtils.downscaleIfNeeded(bitmap, 720)
             val faces = detector.detectStill(scaled)
-            when {
+                        when {
                 faces.isEmpty() -> MatchResult.NoFace
-                faces.size > 1 -> MatchResult.MultipleFaces(faces.size)
                 else -> {
-                    val quality = detector.assessQuality(faces, scaled.width, scaled.height)
+                    // If multiple faces, process only the largest one
+                    val targetFace = if (faces.size > 1) {
+                        faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() } ?: faces.first()
+                    } else {
+                        faces.first()
+                    }
+                    val quality = detector.assessQuality(listOf(targetFace), scaled.width, scaled.height)
                     if (!quality.accepted) {
                         MatchResult.PoorQuality(quality.reason ?: "Poor face quality")
                     } else {
                         val crop = detector.paddedCropRect(
-                            faces.first().boundingBox,
+                            targetFace.boundingBox,
                             scaled.width,
                             scaled.height,
                         )

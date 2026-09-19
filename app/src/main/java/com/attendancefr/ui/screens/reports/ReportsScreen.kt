@@ -77,28 +77,46 @@ fun ReportsScreen(vm: ReportsViewModel = hiltViewModel()) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = vm::export, enabled = !state.exporting, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Outlined.FileDownload, contentDescription = null)
-                Text(if (state.exporting) "  Exporting…" else "  Export Excel")
+                Text(if (state.exporting) "  Exporting…" else "Export Excel")
             }
             OutlinedButton(
                 onClick = {
-                    state.lastExport?.let {
-                        ShareUtils.shareFile(
-                            context,
-                            it,
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            "Share attendance workbook",
-                        )
+                    val uri = state.lastExportUri
+                    val file = state.lastExportFile
+                    when {
+                        uri != null -> {
+                            ShareUtils.shareUri(
+                                context,
+                                uri,
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                "Share attendance workbook",
+                            )
+                        }
+                        file != null -> {
+                            ShareUtils.shareFile(
+                                context,
+                                file,
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                "Share attendance workbook",
+                            )
+                        }
                     }
                 },
-                enabled = state.lastExport != null,
+                enabled = state.lastExportFile != null || state.lastExportUri != null,
                 modifier = Modifier.weight(1f),
             ) {
                 Icon(Icons.Outlined.Share, contentDescription = null)
                 Text("  Share")
             }
         }
-        state.lastExport?.let {
-            Text("Saved: ${it.name}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val file = state.lastExportFile
+        if (file != null) {
+            val location = if (state.lastExportUri != null) {
+                "Downloads/Present/${file.name}"
+            } else {
+                file.absolutePath
+            }
+            Text("Saved: $location", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Spacer(Modifier.height(12.dp))

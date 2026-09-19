@@ -363,22 +363,19 @@ private fun LiveCapture(
         provider.bindWithSelector(lifecycleOwner, selector, preview, imageCapture, analysis)
     }
 
+        // Auto-trigger: scan continuously while a face is in frame, using cooldown only.
     val lastAutoTriggerMs = remember { mutableLongStateOf(0L) }
-    val previousFaceCount = remember { mutableIntStateOf(0) }
     LaunchedEffect(auto) {
-        if (!auto) {
-            previousFaceCount.intValue = 0
-            return@LaunchedEffect
-        }
+        if (!auto) return@LaunchedEffect
         while (isActive) {
-            delay(200)
+            delay(200) // poll at 5 Hz
             if (busy) continue
             val count = boxes.size
             val now = System.currentTimeMillis()
-            val faceEntered = previousFaceCount.intValue == 0 && count == 1
             val cooldownOk = now - lastAutoTriggerMs.longValue >= 2000
-            if (faceEntered && cooldownOk) {
+            if (count >= 1 && cooldownOk) {
                 lastAutoTriggerMs.longValue = now
+                // Short "shutter" beep so the user knows they were detected
                 val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
                 tone.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
                 delay(150)
@@ -386,7 +383,6 @@ private fun LiveCapture(
                 runCatching { imageCapture.takeBitmap(context) }
                     .onSuccess { onCaptureBitmap(it, true) }
             }
-            previousFaceCount.intValue = count
         }
     }
 

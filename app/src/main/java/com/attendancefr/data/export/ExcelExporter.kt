@@ -1,16 +1,21 @@
 package com.attendancefr.data.export
 
+import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import com.attendancefr.data.local.dao.AttendanceDao
 import com.attendancefr.data.local.dao.StudentDao
 import com.attendancefr.data.local.entity.AttendanceRecordEntity
 import com.attendancefr.data.local.entity.StudentEntity
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.apache.poi.ss.usermodel.FillPatternType
-import org.apache.poi.ss.usermodel.IndexedColors
 import org.apache.poi.ss.usermodel.HorizontalAlignment
-import org.apache.poi.xssf.usermodel.XSSFWorkbook
+import org.apache.poi.ss.usermodel.IndexedColors
 import org.apache.poi.xssf.usermodel.XSSFCellStyle
+import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -31,9 +36,18 @@ class ExcelExporter @Inject constructor(
         val className: String?,
     )
 
-    fun exportsDir(): File = File(context.filesDir, "exports").apply { mkdirs() }
+    data class ExportResult(
+        val file: File,
+        val publicUri: Uri? = null,
+    )
 
-    suspend fun export(request: ExportRequest): File {
+    fun exportsDir(): File = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "exports").apply { mkdirs() }
+    } else {
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Present").apply { mkdirs() }
+    }
+
+    suspend fun export(request: ExportRequest): ExportResult {
         val students = if (request.className.isNullOrBlank()) {
             studentDao.getAll()
         } else {
@@ -45,7 +59,7 @@ class ExcelExporter @Inject constructor(
 
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         val classPart = request.className?.replace("\\s+".toRegex(), "_") ?: "all"
-        val file = File(exportsDir(), "attendance_${classPart}_${request.fromDate}_to_${request.toDate}_$stamp.xlsx")
+        val fileName = "attendance_${classPart}_${request.fromDate}_to_${request.toDate}_$stamp.xlsx"
 
         XSSFWorkbook().use { wb ->
             val headerStyle = (wb.createCellStyle() as XSSFCellStyle).apply {
@@ -73,9 +87,37 @@ class ExcelExporter @Inject constructor(
             writeDetailSheet(wb, students, records, studentMap, headerStyle, presentStyle, absentStyle, lateStyle)
             writeSummarySheet(wb, students, records, studentMap, request, headerStyle)
 
-            FileOutputStream(file).use { wb.write(it) }
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // API 29+: Save to public Downloads via MediaStore
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/Present")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: throw IllegalStateException("Failed to create MediaStore entry")
+
+                resolver.openOutputStream(uri)?.use { wb.write(it) }
+                    ?: throw IllegalStateException("Failed to open output stream")
+
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+
+                // Also keep a private copy for sharing via FileProvider
+                val privateFile = File(exportsDir(), fileName)
+                FileOutputStream(privateFile).use { wb.write(it) }
+
+                ExportResult(file = privateFile, publicUri = uri)
+            } else {
+                // API < 29: Save directly to public Downloads/Present
+                val file = File(exportsDir(), fileName)
+                FileOutputStream(file).use { wb.write(it) }
+                ExportResult(file = file)
+            }
         }
-        return file
     }
 
     private fun writeDetailSheet(

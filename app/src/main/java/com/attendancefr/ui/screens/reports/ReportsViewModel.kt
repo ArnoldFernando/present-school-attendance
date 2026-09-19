@@ -1,6 +1,6 @@
 package com.attendancefr.ui.screens.reports
 
-import android.util.Log
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.attendancefr.data.export.ExcelExporter
@@ -15,6 +15,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
@@ -41,7 +42,8 @@ data class ReportsUiState(
     val stats: List<StudentStat> = emptyList(),
     val records: List<AttendanceRecordEntity> = emptyList(),
     val exporting: Boolean = false,
-    val lastExport: File? = null,
+    val lastExportFile: File? = null,
+    val lastExportUri: Uri? = null,
     val error: String? = null,
 )
 
@@ -57,37 +59,56 @@ class ReportsViewModel @Inject constructor(
     private val from = MutableStateFlow(DateUtils.minusDays(DateUtils.today(), 30))
     private val to = MutableStateFlow(DateUtils.today())
     private val exporting = MutableStateFlow(false)
-    private val lastExport = MutableStateFlow<File?>(null)
+    private val lastExportFile = MutableStateFlow<File?>(null)
+    private val lastExportUri = MutableStateFlow<Uri?>(null)
     private val error = MutableStateFlow<String?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val recordsFlow = combine(from, to) { f, t -> f to t }
         .flatMapLatest { (f, t) -> attendance.observeInRange(f, t) }
 
-    private data class Filters(
+    // Combine data sources first
+    private val dataFlow = combine(
+        students.observeStudents(),
+        recordsFlow,
+        classesRepo.observeAll(),
+    ) { studentList, records, classes ->
+        Triple(studentList, records, classes)
+    }
+
+    // Combine UI state separately
+    private val uiStateFlow = combine(
+        classFilter,
+        from,
+        to,
+        exporting,
+        lastExportFile,
+        lastExportUri,
+        error,
+    ) { array ->
+        val cf = array[0] as String?
+        val f = array[1] as String
+        val t = array[2] as String
+        val ex = array[3] as Boolean
+        val file = array[4] as File?
+        val uri = array[5] as Uri?
+        val err = array[6] as String?
+        UIState(cf, f, t, ex, file, uri, err)
+    }
+
+    private data class UIState(
         val classFilter: String?,
         val from: String,
         val to: String,
         val exporting: Boolean,
-        val lastExport: File?,
+        val lastExportFile: File?,
+        val lastExportUri: Uri?,
         val error: String?,
     )
 
-    private val filters = combine(classFilter, from, to, exporting, lastExport) { cf, f, t, ex, file ->
-        Filters(cf, f, t, ex, file, null)
-    }.combine(error) { filt, err -> filt.copy(error = err) }
-
-    val state = combine(
-        students.observeStudents(),
-        recordsFlow,
-        classesRepo.observeAll(),
-        filters,
-    ) { studentList: List<Student>,
-        records: List<AttendanceRecordEntity>,
-        classes: List<ClassSection>,
-        filt: Filters ->
-        val filteredStudents =
-            studentList.filter { filt.classFilter == null || it.className == filt.classFilter }
+    val state: StateFlow<ReportsUiState> = combine(dataFlow, uiStateFlow) { data, ui ->
+        val (studentList, records, classes) = data
+        val filteredStudents = studentList.filter { ui.classFilter == null || it.className == ui.classFilter }
         val recs = records.filter { rec -> filteredStudents.any { it.id == rec.studentId } }
         val dates = recs.map { it.date }.toSet()
         val sessions = dates.size
@@ -101,34 +122,28 @@ class ReportsViewModel @Inject constructor(
         }.sortedBy { it.student.name.lowercase() }
         ReportsUiState(
             classes = classes.map { it.name },
-            classFilter = filt.classFilter,
-            from = filt.from,
-            to = filt.to,
+            classFilter = ui.classFilter,
+            from = ui.from,
+            to = ui.to,
             stats = stats,
             records = recs,
-            exporting = filt.exporting,
-            lastExport = filt.lastExport,
-            error = filt.error,
+            exporting = ui.exporting,
+            lastExportFile = ui.lastExportFile,
+            lastExportUri = ui.lastExportUri,
+            error = ui.error,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReportsUiState())
 
-    fun onFilter(v: String?) {
-        classFilter.value = v
-    }
+    fun onFilter(v: String?) { classFilter.value = v }
+    fun onFrom(v: String) { from.value = v }
+    fun onTo(v: String) { to.value = v }
 
-    fun onFrom(v: String) {
-        from.value = v
-    }
-
-    fun onTo(v: String) {
-        to.value = v
-    }
-
-       fun export() {
+    fun export() {
         viewModelScope.launch {
             exporting.value = true
             error.value = null
-            lastExport.value = null
+            lastExportFile.value = null
+            lastExportUri.value = null
             runCatching {
                 exporter.export(
                     ExcelExporter.ExportRequest(
@@ -137,10 +152,12 @@ class ReportsViewModel @Inject constructor(
                         className = classFilter.value,
                     )
                 )
-            }.onSuccess {
-                lastExport.value = it
-            }.onFailure {
-                error.value = it.message ?: it::class.java.simpleName ?: "Export failed"
+            }.onSuccess { result ->
+                lastExportFile.value = result.file
+                lastExportUri.value = result.publicUri
+            }.onFailure { t ->
+                val msg = t.message ?: t::class.java.simpleName ?: "Export failed"
+                error.value = msg
             }
             exporting.value = false
         }
