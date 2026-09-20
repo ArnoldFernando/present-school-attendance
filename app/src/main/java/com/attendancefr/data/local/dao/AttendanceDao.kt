@@ -22,8 +22,8 @@ interface AttendanceDao {
     @Query("SELECT * FROM attendance_records WHERE date = :date")
     suspend fun getByDate(date: String): List<AttendanceRecordEntity>
 
-    @Query("SELECT * FROM attendance_records WHERE studentId = :studentId AND date = :date LIMIT 1")
-    suspend fun getForStudentOnDate(studentId: Long, date: String): AttendanceRecordEntity?
+        @Query("SELECT * FROM attendance_records WHERE studentId = :studentId AND date = :date AND className = :className LIMIT 1")
+    suspend fun getForStudentOnDate(studentId: Long, date: String, className: String): AttendanceRecordEntity?
 
     @Query(
         "SELECT * FROM attendance_records WHERE date BETWEEN :from AND :to ORDER BY date ASC, timestamp ASC"

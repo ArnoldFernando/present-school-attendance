@@ -21,11 +21,11 @@ class AttendanceRepository @Inject constructor(
     private val studentDao: StudentDao,
 ) {
     fun observeByDate(date: String): Flow<List<AttendanceRecord>> =
-        combine(attendanceDao.observeByDate(date), studentDao.observeAll()) { records, students ->
-            val map = students.associateBy { it.id }
+        combine(attendanceDao.observeByDate(date), studentDao.observeAllWithClasses()) { records, students ->
+            val map = students.associateBy { it.student.id }
             records.mapNotNull { rec ->
-                val s = map[rec.studentId] ?: return@mapNotNull null
-                rec.toDomain(s.name, s.studentId, s.className)
+                val s = map[rec.studentId]?.student ?: return@mapNotNull null
+                rec.toDomain(s.name, s.studentId)
             }
         }
 
@@ -36,7 +36,6 @@ class AttendanceRepository @Inject constructor(
                 it.toDomain(
                     student?.name.orEmpty(),
                     student?.studentId.orEmpty(),
-                    student?.className.orEmpty(),
                 )
             }
         }
@@ -47,25 +46,19 @@ class AttendanceRepository @Inject constructor(
     suspend fun getInRange(from: String, to: String): List<AttendanceRecordEntity> =
         attendanceDao.getInRange(from, to)
 
-    suspend fun getForStudentOnDate(studentId: Long, date: String): AttendanceRecordEntity? =
-        attendanceDao.getForStudentOnDate(studentId, date)
+    suspend fun alreadyMarkedToday(studentId: Long, className: String, date: String = today()): Boolean =
+        attendanceDao.getForStudentOnDate(studentId, date, className) != null
 
-    suspend fun alreadyMarkedToday(studentId: Long, date: String = today()): Boolean =
-        attendanceDao.getForStudentOnDate(studentId, date) != null
-
-    /**
-     * Insert or update today's record. Unique (studentId, date) so a second
-     * automatic match is a no-op; a manual override *updates* the existing row.
-     */
     suspend fun mark(
         studentId: Long,
+        className: String,
         status: AttendanceStatus,
         confidence: Float?,
         isManual: Boolean,
         date: String = today(),
         timestamp: Long = System.currentTimeMillis(),
     ): MarkOutcome {
-        val existing = attendanceDao.getForStudentOnDate(studentId, date)
+        val existing = attendanceDao.getForStudentOnDate(studentId, date, className)
         if (existing != null) {
             if (!isManual) return MarkOutcome.AlreadyMarked(existing)
             attendanceDao.update(
@@ -82,6 +75,7 @@ class AttendanceRepository @Inject constructor(
             AttendanceRecordEntity(
                 studentId = studentId,
                 date = date,
+                className = className,
                 timestamp = timestamp,
                 status = status.name,
                 matchConfidence = confidence,
@@ -113,7 +107,6 @@ class AttendanceRepository @Inject constructor(
 private fun AttendanceRecordEntity.toDomain(
     studentName: String,
     studentRoll: String,
-    className: String,
 ) = AttendanceRecord(
     id = id,
     studentId = studentId,

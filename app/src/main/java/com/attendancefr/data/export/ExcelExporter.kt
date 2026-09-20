@@ -34,6 +34,7 @@ class ExcelExporter @Inject constructor(
         val fromDate: String,
         val toDate: String,
         val className: String?,
+        val allClassNames: List<String> = emptyList(),
     )
 
     data class ExportResult(
@@ -48,14 +49,15 @@ class ExcelExporter @Inject constructor(
     }
 
     suspend fun export(request: ExportRequest): ExportResult {
-        val students = if (request.className.isNullOrBlank()) {
-            studentDao.getAll()
+        val allRecords = attendanceDao.getInRange(request.fromDate, request.toDate)
+
+        val classesToExport = if (!request.className.isNullOrBlank()) {
+            listOf(request.className)
+        } else if (request.allClassNames.isNotEmpty()) {
+            request.allClassNames
         } else {
-            studentDao.getByClass(request.className)
+            allRecords.map { it.className }.distinct().filter { it.isNotBlank() }.sorted()
         }
-        val studentMap = students.associateBy { it.id }
-        val records = attendanceDao.getInRange(request.fromDate, request.toDate)
-            .filter { studentMap.containsKey(it.studentId) }
 
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         val classPart = request.className?.replace("\\s+".toRegex(), "_") ?: "all"
@@ -84,11 +86,56 @@ class ExcelExporter @Inject constructor(
                 fillPattern = FillPatternType.SOLID_FOREGROUND
             }
 
-            writeDetailSheet(wb, students, records, studentMap, headerStyle, presentStyle, absentStyle, lateStyle)
-            writeSummarySheet(wb, students, records, studentMap, request, headerStyle)
+            val usedSheetNames = mutableSetOf<String>()
+            usedSheetNames.add("Summary")
+
+            // One detail sheet per class
+            classesToExport.forEach { className ->
+                val studentsInClass = studentDao.getByClass(className)
+                val studentMap = studentsInClass.associateBy { it.id }
+                val recordsInClass = allRecords.filter {
+                    it.className == className && studentMap.containsKey(it.studentId)
+                }
+
+                if (studentsInClass.isNotEmpty() || recordsInClass.isNotEmpty()) {
+                    writeDetailSheet(
+                        wb = wb,
+                        sheetName = sanitizeSheetName(className, usedSheetNames),
+                        className = className,
+                        students = studentsInClass,
+                        records = recordsInClass,
+                        studentMap = studentMap,
+                        headerStyle = headerStyle,
+                        presentStyle = presentStyle,
+                        absentStyle = absentStyle,
+                        lateStyle = lateStyle,
+                    )
+                }
+            }
+
+            // Summary sheet
+            val summaryStudents = if (!request.className.isNullOrBlank()) {
+                studentDao.getByClass(request.className)
+            } else {
+                studentDao.getAll()
+            }
+            val summaryStudentMap = summaryStudents.associateBy { it.id }
+            val summaryRecords = if (!request.className.isNullOrBlank()) {
+                allRecords.filter { it.className == request.className }
+            } else {
+                allRecords
+            }
+
+            writeSummarySheet(
+                wb = wb,
+                students = summaryStudents,
+                records = summaryRecords,
+                studentMap = summaryStudentMap,
+                request = request,
+                headerStyle = headerStyle,
+            )
 
             return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // API 29+: Save to public Downloads via MediaStore
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, fileName)
                     put(MediaStore.Downloads.MIME_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -106,13 +153,11 @@ class ExcelExporter @Inject constructor(
                 values.put(MediaStore.Downloads.IS_PENDING, 0)
                 resolver.update(uri, values, null, null)
 
-                // Also keep a private copy for sharing via FileProvider
                 val privateFile = File(exportsDir(), fileName)
                 FileOutputStream(privateFile).use { wb.write(it) }
 
                 ExportResult(file = privateFile, publicUri = uri)
             } else {
-                // API < 29: Save directly to public Downloads/Present
                 val file = File(exportsDir(), fileName)
                 FileOutputStream(file).use { wb.write(it) }
                 ExportResult(file = file)
@@ -120,8 +165,29 @@ class ExcelExporter @Inject constructor(
         }
     }
 
+    private fun sanitizeSheetName(name: String, usedNames: MutableSet<String>): String {
+        // Excel sheet names: max 31 chars, cannot contain: \ / ? * [ ]
+        val base = name.replace(Regex("[\\\\/\\?\\*\\[\\]]"), "_").take(31)
+        if (base !in usedNames) {
+            usedNames.add(base)
+            return base
+        }
+        (2..99).forEach { i ->
+            val candidate = "${base.take(29 - i.toString().length)}_$i"
+            if (candidate !in usedNames) {
+                usedNames.add(candidate)
+                return candidate
+            }
+        }
+        val fallback = "${base.take(20)}_${System.currentTimeMillis() % 10000}"
+        usedNames.add(fallback)
+        return fallback
+    }
+
     private fun writeDetailSheet(
         wb: XSSFWorkbook,
+        sheetName: String,
+        className: String,
         students: List<StudentEntity>,
         records: List<AttendanceRecordEntity>,
         studentMap: Map<Long, StudentEntity>,
@@ -130,7 +196,7 @@ class ExcelExporter @Inject constructor(
         absentStyle: XSSFCellStyle,
         lateStyle: XSSFCellStyle,
     ) {
-        val sheet = wb.createSheet("Records")
+        val sheet = wb.createSheet(sheetName)
         val headers = listOf(
             "Student ID", "Name", "Class", "Date", "Time", "Status", "Match Confidence", "Marked By"
         )
@@ -150,7 +216,7 @@ class ExcelExporter @Inject constructor(
             val row = sheet.createRow(rowIdx++)
             row.createCell(0).setCellValue(s.studentId)
             row.createCell(1).setCellValue(s.name)
-            row.createCell(2).setCellValue(s.className)
+            row.createCell(2).setCellValue(rec.className)
             row.createCell(3).setCellValue(rec.date)
             row.createCell(4).setCellValue(timeFmt.format(Date(rec.timestamp)))
             val statusCell = row.createCell(5)
@@ -175,7 +241,7 @@ class ExcelExporter @Inject constructor(
                 val row = sheet.createRow(rowIdx++)
                 row.createCell(0).setCellValue(s.studentId)
                 row.createCell(1).setCellValue(s.name)
-                row.createCell(2).setCellValue(s.className)
+                row.createCell(2).setCellValue(className)
                 row.createCell(3).setCellValue(date)
                 row.createCell(4).setCellValue("")
                 val statusCell = row.createCell(5)

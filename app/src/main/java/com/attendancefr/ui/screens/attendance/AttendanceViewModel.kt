@@ -126,10 +126,12 @@ class AttendanceViewModel @Inject constructor(
         }
     }
 
-    fun assignUnknown(student: Student) {
+        fun assignUnknown(student: Student) {
         viewModelScope.launch {
+            val className = _state.value.selectedClass
             val result = attendance.mark(
                 studentId = student.id,
+                className = className,
                 status = AttendanceStatus.Present,
                 confidence = null,
                 isManual = true,
@@ -139,7 +141,7 @@ class AttendanceViewModel @Inject constructor(
                 it.copy(
                     lastResult = MatchResult.Matched(student, 0f, already),
                     unknownProbe = null,
-                    hint = if (already) "${student.name} already marked today" else "Marked ${student.name} (manual)",
+                    hint = if (already) "${student.name} already marked today in $className" else "Marked ${student.name} (manual)",
                     sessionMarks = it.sessionMarks + SessionMark(
                         student, null, already, AttendanceStatus.Present
                     ),
@@ -183,9 +185,9 @@ class AttendanceViewModel @Inject constructor(
                             MatchResult.PoorQuality(lighting.hint ?: "Move to better lighting.")
                         } else {
                             val probe = engine.embed(scaled, crop)
-                            val className = _state.value.selectedClass
+                                                        val className = _state.value.selectedClass
                             val scoped = if (className.isBlank()) gallery
-                            else gallery.filter { studentIndex[it.studentId]?.className == className }
+                            else gallery.filter { studentIndex[it.studentId]?.classNames?.contains(className) == true }
                             val best = matcher.best(probe, scoped)
                             val threshold = _state.value.threshold
                             if (best == null) {
@@ -211,12 +213,14 @@ class AttendanceViewModel @Inject constructor(
 
     private suspend fun handle(result: MatchResult) {
         when (result) {
-            is MatchResult.Matched -> {
-                            _soundEvents.emit(SoundEvent(SoundType.SUCCESS))
-                val already = attendance.alreadyMarkedToday(result.student.id)
+                  is MatchResult.Matched -> {
+                _soundEvents.emit(SoundEvent(SoundType.SUCCESS))
+                val className = _state.value.selectedClass
+                val already = attendance.alreadyMarkedToday(result.student.id, className)
                 if (!already) {
                     attendance.mark(
                         studentId = result.student.id,
+                        className = className,
                         status = AttendanceStatus.Present,
                         confidence = result.confidence,
                         isManual = false,
@@ -227,7 +231,7 @@ class AttendanceViewModel @Inject constructor(
                         busy = false,
                         lastResult = result.copy(alreadyMarked = already),
                         hint = if (already)
-                            "${result.student.name} already marked today"
+                            "${result.student.name} already marked today in $className"
                         else "Present: ${result.student.name}  (${fmt(result.confidence)})",
                         sessionMarks = it.sessionMarks + SessionMark(
                             result.student, result.confidence, already, AttendanceStatus.Present

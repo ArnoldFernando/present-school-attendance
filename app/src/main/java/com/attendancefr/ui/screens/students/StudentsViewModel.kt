@@ -37,10 +37,10 @@ class StudentsViewModel @Inject constructor(
         query,
         classFilter,
     ) { list, cls, q, filter ->
-        val filtered = list.filter { s ->
-            (filter == null || s.className == filter) &&
-                (q.isBlank() || s.name.contains(q, true) || s.studentId.contains(q, true))
-        }
+                   val filtered = list.filter { s ->
+                (filter == null || s.classNames.contains(filter)) &&
+                    (q.isBlank() || s.name.contains(q, true) || s.studentId.contains(q, true))
+            }
         StudentsUiState(students = filtered, classes = cls, query = q, classFilter = filter)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StudentsUiState())
 

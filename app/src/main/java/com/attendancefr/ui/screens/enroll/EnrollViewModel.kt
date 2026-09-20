@@ -39,7 +39,7 @@ data class EnrollUiState(
     val reenrollStudentId: Long? = null,
     val name: String = "",
     val roll: String = "",
-    val className: String = "",
+    val classNames: List<String> = emptyList(),
     val classes: List<ClassSection> = emptyList(),
     val pose: PoseStep = PoseStep.Straight,
     val shots: List<CapturedShot> = emptyList(),
@@ -74,7 +74,7 @@ class EnrollViewModel @Inject constructor(
                 _state.update { s ->
                     s.copy(
                         classes = list,
-                        className = s.className.ifBlank { list.firstOrNull()?.name.orEmpty() },
+                        classNames = s.classNames.ifEmpty { listOfNotNull(list.firstOrNull()?.name) },
                     )
                 }
             }
@@ -83,7 +83,11 @@ class EnrollViewModel @Inject constructor(
             viewModelScope.launch {
                 val s = students.getById(existingId) ?: return@launch
                 _state.update {
-                    it.copy(name = s.name, roll = s.studentId, className = s.className)
+                    it.copy(
+                        name = s.name,
+                        roll = s.studentId,
+                        classNames = s.classNames.ifEmpty { listOf(s.className) }
+                    )
                 }
             }
         }
@@ -91,12 +95,24 @@ class EnrollViewModel @Inject constructor(
 
     fun onName(v: String) = _state.update { it.copy(name = v, error = null) }
     fun onRoll(v: String) = _state.update { it.copy(roll = v, error = null) }
-    fun onClass(v: String) = _state.update { it.copy(className = v, error = null) }
+
+    fun onClassSelect(v: String) = _state.update { s ->
+        if (v in s.classNames) s else s.copy(classNames = s.classNames + v, error = null)
+    }
+
+    fun onClassRemove(v: String) = _state.update { s ->
+        s.copy(classNames = s.classNames - v, error = null)
+    }
 
     fun addClass(name: String) {
         viewModelScope.launch {
-            runCatching { classes.add(name) }
-                .onSuccess { _state.update { it.copy(className = name.trim()) } }
+            val trimmed = name.trim()
+            runCatching { classes.add(trimmed) }
+                .onSuccess {
+                    _state.update { s ->
+                        if (trimmed in s.classNames) s else s.copy(classNames = s.classNames + trimmed)
+                    }
+                }
                 .onFailure { e -> _state.update { it.copy(error = e.message) } }
         }
     }
@@ -159,8 +175,8 @@ class EnrollViewModel @Inject constructor(
 
     fun save() {
         val s = _state.value
-        if (s.name.isBlank() || s.roll.isBlank() || s.className.isBlank()) {
-            _state.update { it.copy(error = "Name, student ID and class are required.") }
+        if (s.name.isBlank() || s.roll.isBlank() || s.classNames.isEmpty()) {
+            _state.update { it.copy(error = "Name, student ID and at least one class are required.") }
             return
         }
         if (s.shots.size < s.minShots) {
@@ -173,12 +189,12 @@ class EnrollViewModel @Inject constructor(
                 val embeddings = s.shots.map { it.embedding }
                 val existing = s.reenrollStudentId
                 if (existing != null) {
-                    students.updateDetails(existing, s.roll, s.name, s.className)
+                    students.updateDetails(existing, s.roll, s.name, s.classNames)
                     students.replaceEmbeddings(existing, embeddings)
                 } else {
-                    students.enroll(s.roll, s.name, s.className, embeddings)
+                    students.enroll(s.roll, s.name, s.classNames, embeddings)
                 }
-                settings.setLastSelectedClass(s.className)
+                settings.setLastSelectedClass(s.classNames.firstOrNull().orEmpty())
             }.onSuccess {
                 _state.update { it.copy(busy = false, saved = true) }
             }.onFailure { e ->

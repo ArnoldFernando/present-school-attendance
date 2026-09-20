@@ -106,10 +106,19 @@ class ReportsViewModel @Inject constructor(
         val error: String?,
     )
 
-    val state: StateFlow<ReportsUiState> = combine(dataFlow, uiStateFlow) { data, ui ->
+     val state: StateFlow<ReportsUiState> = combine(dataFlow, uiStateFlow) { data, ui ->
         val (studentList, records, classes) = data
-        val filteredStudents = studentList.filter { ui.classFilter == null || it.className == ui.classFilter }
-        val recs = records.filter { rec -> filteredStudents.any { it.id == rec.studentId } }
+        // Fix 1: Use classNames list for student filtering
+        val filteredStudents = studentList.filter { ui.classFilter == null || it.classNames.contains(ui.classFilter) }
+        // Fix 2: Also filter records by their own className
+               val recs = records.filter { rec ->
+            val student = filteredStudents.find { it.id == rec.studentId }
+            student != null && (
+                ui.classFilter == null || 
+                rec.className == ui.classFilter ||
+                (rec.className.isEmpty() && student.className == ui.classFilter)
+            )
+        }
         val dates = recs.map { it.date }.toSet()
         val sessions = dates.size
         val byStudent = recs.groupBy { it.studentId }
@@ -150,6 +159,7 @@ class ReportsViewModel @Inject constructor(
                         fromDate = from.value,
                         toDate = to.value,
                         className = classFilter.value,
+                        allClassNames = state.value.classes,
                     )
                 )
             }.onSuccess { result ->

@@ -5,12 +5,14 @@ import com.attendancefr.data.local.dao.EmbeddingCount
 import com.attendancefr.data.local.dao.FaceEmbeddingDao
 import com.attendancefr.data.local.dao.StudentDao
 import com.attendancefr.data.local.entity.FaceEmbeddingEntity
+import com.attendancefr.data.local.entity.StudentClassCrossRef
 import com.attendancefr.data.local.entity.StudentEntity
 import com.attendancefr.domain.model.Student
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.attendancefr.data.local.entity.ClassSectionEntity
 
 @Singleton
 class StudentRepository @Inject constructor(
@@ -18,15 +20,15 @@ class StudentRepository @Inject constructor(
     private val embeddingDao: FaceEmbeddingDao,
 ) {
     fun observeStudents(): Flow<List<Student>> =
-        combine(studentDao.observeAll(), embeddingDao.observeCounts()) { students, counts ->
+        combine(studentDao.observeAllWithClasses(), embeddingDao.observeCounts()) { students, counts ->
             val map = counts.associate { it.studentId to it.cnt }
-            students.map { it.toDomain(map[it.id] ?: 0) }
+            students.map { it.toDomain(map[it.student.id] ?: 0) }
         }
 
     fun observeByClass(className: String): Flow<List<Student>> =
-        combine(studentDao.observeByClass(className), embeddingDao.observeCounts()) { students, counts ->
+        combine(studentDao.observeByClassWithClasses(className), embeddingDao.observeCounts()) { students, counts ->
             val map = counts.associate { it.studentId to it.cnt }
-            students.map { it.toDomain(map[it.id] ?: 0) }
+            students.map { it.toDomain(map[it.student.id] ?: 0) }
         }
 
     fun search(query: String): Flow<List<Student>> =
@@ -38,7 +40,8 @@ class StudentRepository @Inject constructor(
     suspend fun getById(id: Long): Student? {
         val entity = studentDao.getById(id) ?: return null
         val count = embeddingDao.countForStudent(id)
-        return entity.toDomain(count)
+        val classes = studentDao.getClassesForStudent(id)
+        return entity.toDomain(count, classes)
     }
 
     suspend fun getByRoll(roll: String): StudentEntity? = studentDao.getByRoll(roll)
@@ -50,7 +53,7 @@ class StudentRepository @Inject constructor(
     suspend fun enroll(
         studentId: String,
         name: String,
-        className: String,
+        classNames: List<String>,
         embeddings: List<FloatArray>,
         now: Long = System.currentTimeMillis(),
     ): Long {
@@ -58,14 +61,18 @@ class StudentRepository @Inject constructor(
         if (existing != null) {
             throw IllegalArgumentException("A student with ID \"$studentId\" already exists.")
         }
+        val primaryClass = classNames.firstOrNull()?.trim() ?: ""
         val id = studentDao.insert(
             StudentEntity(
                 studentId = studentId.trim(),
                 name = name.trim(),
-                className = className.trim(),
+                className = primaryClass,
                 dateEnrolled = now,
             )
         )
+        classNames.distinct().forEach { cls ->
+            studentDao.insertStudentClass(StudentClassCrossRef(id, cls.trim()))
+        }
         embeddingDao.insertAll(
             embeddings.map { vec ->
                 FaceEmbeddingEntity(
@@ -78,15 +85,19 @@ class StudentRepository @Inject constructor(
         return id
     }
 
-    suspend fun updateDetails(id: Long, studentId: String, name: String, className: String) {
+    suspend fun updateDetails(id: Long, studentId: String, name: String, classNames: List<String>) {
         val current = studentDao.getById(id) ?: return
         studentDao.update(
             current.copy(
                 studentId = studentId.trim(),
                 name = name.trim(),
-                className = className.trim(),
+                className = classNames.firstOrNull()?.trim() ?: current.className,
             )
         )
+        studentDao.deleteStudentClasses(id)
+        classNames.distinct().forEach { cls ->
+            studentDao.insertStudentClass(StudentClassCrossRef(id, cls.trim()))
+        }
     }
 
     suspend fun replaceEmbeddings(studentId: Long, embeddings: List<FloatArray>, now: Long = System.currentTimeMillis()) {
@@ -103,6 +114,7 @@ class StudentRepository @Inject constructor(
     }
 
     suspend fun delete(id: Long) {
+        studentDao.deleteStudentClasses(id)
         studentDao.deleteById(id)
     }
 
@@ -112,12 +124,37 @@ class StudentRepository @Inject constructor(
     suspend fun getAllEmbeddings(): List<Pair<Long, FloatArray>> =
         embeddingDao.getAll().map { it.studentId to EmbeddingCodec.toFloats(it.embeddingVector) }
 
-    private fun StudentEntity.toDomain(count: Int) = Student(
-        id = id,
-        studentId = studentId,
-        name = name,
-        className = className,
-        dateEnrolled = dateEnrolled,
-        embeddingCount = count,
-    )
+   private fun com.attendancefr.data.local.relation.StudentWithClasses.toDomain(count: Int) = Student(
+    id = student.id,
+    studentId = student.studentId,
+    name = student.name,
+    className = student.className,
+    classNames = classes.map { it.className },
+    dateEnrolled = student.dateEnrolled,
+    embeddingCount = count,
+)
+
+private fun StudentEntity.toDomain(count: Int, classes: List<String>) = Student(
+    id = id,
+    studentId = studentId,
+    name = name,
+    className = className,
+    classNames = classes,
+    dateEnrolled = dateEnrolled,
+    embeddingCount = count,
+)
+
+// Needed for the search() function which returns plain StudentEntity
+private fun StudentEntity.toDomain(count: Int) = Student(
+    id = id,
+    studentId = studentId,
+    name = name,
+    className = className,
+    classNames = emptyList(),
+    dateEnrolled = dateEnrolled,
+    embeddingCount = count,
+)
+
+
+
 }

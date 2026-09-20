@@ -80,7 +80,7 @@ class ManualOverrideViewModel @Inject constructor(
     ) { studentList, records, classes, q, filter ->
         val recMap = records.associateBy { it.studentId }
         val rows = studentList
-            .filter { filter.isBlank() || it.className == filter }
+            .filter { filter.isBlank() || it.classNames.contains(filter) }
             .filter { q.isBlank() || it.name.contains(q, true) || it.studentId.contains(q, true) }
             .map { s ->
                 val rec = recMap[s.id]
@@ -106,6 +106,7 @@ class ManualOverrideViewModel @Inject constructor(
         viewModelScope.launch {
             attendance.mark(
                 studentId = studentId,
+                className = classFilter.value,
                 status = status,
                 confidence = null,
                 isManual = true,

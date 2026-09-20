@@ -5,6 +5,7 @@ data class Student(
     val studentId: String,
     val name: String,
     val className: String,
+    val classNames: List<String> = emptyList(),
     val dateEnrolled: Long,
     val embeddingCount: Int = 0,
 )

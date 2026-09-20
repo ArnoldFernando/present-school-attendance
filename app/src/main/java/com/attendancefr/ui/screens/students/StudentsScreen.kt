@@ -154,8 +154,9 @@ private fun StudentCard(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(student.name, style = MaterialTheme.typography.titleMedium)
+                                val classesText = student.classNames.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: student.className
                 Text(
-                    "${student.studentId}  ·  ${student.className}",
+                    "${student.studentId}  ·  $classesText",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

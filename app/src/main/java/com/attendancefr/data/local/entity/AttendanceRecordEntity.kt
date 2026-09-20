@@ -16,18 +16,18 @@ import androidx.room.PrimaryKey
         ),
     ],
     indices = [
-        Index(value = ["studentId", "date"], unique = true),
+        Index(value = ["studentId", "date", "className"], unique = true),
         Index(value = ["date"]),
         Index(value = ["studentId"]),
+        Index(value = ["className"]),
     ],
 )
 data class AttendanceRecordEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val studentId: Long,
-    /** ISO-8601 local date, e.g. "2025-04-12". */
     val date: String,
+    val className: String,
     val timestamp: Long,
-    /** AttendanceStatus.name */
     val status: String,
     val matchConfidence: Float?,
     val isManual: Boolean,
