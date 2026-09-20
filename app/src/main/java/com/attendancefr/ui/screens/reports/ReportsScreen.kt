@@ -47,10 +47,14 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.outlined.Description
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReportsScreen(vm: ReportsViewModel = hiltViewModel()) {
+fun ReportsScreen(
+    onNavigateToExports: () -> Unit,
+    vm: ReportsViewModel = hiltViewModel(),
+) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showFromPicker by remember { mutableStateOf(false) }
@@ -189,39 +193,17 @@ fun ReportsScreen(vm: ReportsViewModel = hiltViewModel()) {
         }
 
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = vm::export, enabled = !state.exporting, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Outlined.FileDownload, contentDescription = null)
                 Text(if (state.exporting) "  Exporting…" else "Export Excel")
             }
             OutlinedButton(
-                onClick = {
-                    val uri = state.lastExportUri
-                    val file = state.lastExportFile
-                    when {
-                        uri != null -> {
-                            ShareUtils.shareUri(
-                                context,
-                                uri,
-                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                "Share attendance workbook",
-                            )
-                        }
-                        file != null -> {
-                            ShareUtils.shareFile(
-                                context,
-                                file,
-                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                "Share attendance workbook",
-                            )
-                        }
-                    }
-                },
-                enabled = state.lastExportFile != null || state.lastExportUri != null,
+                onClick = onNavigateToExports,
                 modifier = Modifier.weight(1f),
             ) {
-                Icon(Icons.Outlined.Share, contentDescription = null)
-                Text("  Share")
+                Icon(Icons.Outlined.Description, contentDescription = null)
+                Text("  View Exports")
             }
         }
         val file = state.lastExportFile

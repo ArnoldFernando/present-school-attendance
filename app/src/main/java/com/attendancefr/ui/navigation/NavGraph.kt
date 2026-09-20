@@ -3,6 +3,7 @@ package com.attendancefr.ui.navigation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Settings
@@ -24,6 +25,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.attendancefr.ui.screens.attendance.AttendanceScreen
 import com.attendancefr.ui.screens.enroll.EnrollScreen
+import com.attendancefr.ui.screens.exports.ExportsScreen
 import com.attendancefr.ui.screens.manual.ManualOverrideScreen
 import com.attendancefr.ui.screens.reports.ReportsScreen
 import com.attendancefr.ui.screens.settings.SettingsScreen
@@ -35,6 +37,7 @@ sealed class Dest(val route: String, val label: String, val icon: ImageVector? =
     data object Attendance : Dest("attendance", "Take", Icons.Outlined.Face)
     data object Reports : Dest("reports", "Reports", Icons.Outlined.BarChart)
     data object Settings : Dest("settings", "Settings", Icons.Outlined.Settings)
+    data object Exports : Dest("exports", "Exported Files", Icons.Outlined.Description)
     data object Enroll : Dest("enroll?studentId={studentId}", "Enroll") {
         fun create(studentId: Long? = null): String =
             if (studentId == null) "enroll" else "enroll?studentId=$studentId"
@@ -96,8 +99,15 @@ fun AttendanceNavHost() {
                     onManual = { className -> nav.navigate(Dest.Manual.create(className)) },
                 )
             }
-            composable(Dest.Reports.route) { ReportsScreen() }
+            composable(Dest.Reports.route) {
+                ReportsScreen(
+                    onNavigateToExports = { nav.navigate(Dest.Exports.route) },
+                )
+            }
             composable(Dest.Settings.route) { SettingsScreen() }
+            composable(Dest.Exports.route) {
+                ExportsScreen(onBack = { nav.popBackStack() })
+            }
             composable(
                 route = "enroll?studentId={studentId}",
                 arguments = listOf(
