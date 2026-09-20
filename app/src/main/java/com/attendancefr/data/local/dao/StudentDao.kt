@@ -73,4 +73,9 @@ interface StudentDao {
 
     @Query("SELECT className FROM student_classes WHERE studentId = :studentId")
     suspend fun getClassesForStudent(studentId: Long): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+suspend fun insertAll(students: List<StudentEntity>): List<Long>
+    
+
 }

@@ -1,8 +1,11 @@
 package com.attendancefr.ui.screens.enroll
 
+import android.net.Uri
 import android.view.ViewGroup
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
-import androidx.camera.core.Preview
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.FlipCameraAndroid
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,9 +34,11 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -54,8 +60,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.attendancefr.domain.model.Student
 import com.attendancefr.ui.camera.awaitCameraProvider
-import com.attendancefr.ui.camera.bindWithFallback
 import com.attendancefr.ui.camera.takeBitmap
 import com.attendancefr.ui.components.CameraPermissionGate
 import kotlinx.coroutines.launch
@@ -74,6 +80,14 @@ fun EnrollScreen(
         state.error?.let { snack.showSnackbar(it) }
     }
 
+    val pickFile = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { vm.importStudents(it) }
+    }
+
+    var lensFacing by remember { mutableStateOf(CameraSelector.LENS_FACING_FRONT) }
+
     CameraPermissionGate {
         Column(Modifier.fillMaxSize()) {
             Column(
@@ -82,72 +96,131 @@ fun EnrollScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
-                Text(
-                    if (state.reenrollStudentId == null) "Enroll student" else "Re-enroll face",
-                    style = MaterialTheme.typography.headlineSmall,
-                )
-                Text(
-                    "Capture 3â€“5 photos at slightly different angles. The app rejects blurry, off-center, or eyes-closed shots.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = state.name,
-                    onValueChange = vm::onName,
-                    label = { Text("Full name") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    enabled = state.reenrollStudentId == null || true,
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = state.roll,
-                    onValueChange = vm::onRoll,
-                    label = { Text("Student ID / roll number") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                Spacer(Modifier.height(8.dp))
-                MultiClassPicker(
-                    classes = state.classes.map { it.name },
-                    selected = state.classNames,
-                    onSelect = vm::onClassSelect,
-                    onRemove = vm::onClassRemove,
-                    onAdd = vm::addClass,
-                )
-                Spacer(Modifier.height(16.dp))
-                if (state.modelMissing) {
+                if (!state.isManualEnrollment && state.reenrollStudentId == null) {
+                    Text("Students", style = MaterialTheme.typography.headlineSmall)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = { pickFile.launch("*/*") },
+                        enabled = !state.isImporting,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (state.isImporting) "Importing…" else "Import student list from Excel")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = vm::startManualEnrollment,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Enroll new student")
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    StudentStatusList(
+                        students = state.students,
+                        onEnrollFace = vm::selectStudentForEnrollment,
+                    )
+                } else {
                     Text(
-                        "TFLite model is missing. Copy mobile_face_net.tflite into app/src/main/assets/ (see SETUP.md). You can still fill in details, but photo capture will fail until the model is present.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
+                        if (state.reenrollStudentId == null) "Enroll student" else "Enroll face",
+                        style = MaterialTheme.typography.headlineSmall,
+                    )
+                    Text(
+                        "Capture 3–5 photos at slightly different angles. The app rejects blurry, off-center, or eyes-closed shots.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+
+                    if (state.reenrollStudentId != null) {
+                        TextButton(
+                            onClick = vm::clearEnrollment,
+                            modifier = Modifier.align(Alignment.End),
+                        ) { Text("Back to list") }
+                    }
+
+                    OutlinedTextField(
+                        value = state.name,
+                        onValueChange = vm::onName,
+                        label = { Text("Full name") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        enabled = state.reenrollStudentId == null,
                     )
                     Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = state.roll,
+                        onValueChange = vm::onRoll,
+                        label = { Text("Student ID / roll number") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        enabled = state.reenrollStudentId == null,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    MultiClassPicker(
+                        classes = state.classes.map { it.name },
+                        selected = state.classNames,
+                        onSelect = vm::onClassSelect,
+                        onRemove = vm::onClassRemove,
+                        onAdd = vm::addClass,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    if (state.modelMissing) {
+                        Text(
+                            "TFLite model is missing. Copy mobile_face_net.tflite into app/src/main/assets/ (see SETUP.md). You can still fill in details, but photo capture will fail until the model is present.",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    CapturePanel(
+                        pose = state.pose,
+                        hint = state.hint,
+                        shots = state.shots.size,
+                        max = state.maxShots,
+                        busy = state.busy,
+                        lensFacing = lensFacing,
+                        onToggleCamera = {
+                            lensFacing = if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
+                                CameraSelector.LENS_FACING_BACK
+                            } else {
+                                CameraSelector.LENS_FACING_FRONT
+                            }
+                        },
+                        onCapture = vm::capture,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ShotDots(count = state.shots.size, max = state.maxShots)
                 }
-                CapturePanel(
-                    pose = state.pose,
-                    hint = state.hint,
-                    shots = state.shots.size,
-                    max = state.maxShots,
-                    busy = state.busy,
-                    onCapture = vm::capture,
-                )
-                Spacer(Modifier.height(8.dp))
-                ShotDots(count = state.shots.size, max = state.maxShots)
             }
+
             Row(
                 Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                TextButton(onClick = onDone, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                Button(
-                    onClick = vm::save,
-                    enabled = !state.busy && state.shots.size >= state.minShots,
-                    modifier = Modifier.weight(1f),
-                ) { Text("Save student") }
+                if (state.isManualEnrollment || state.reenrollStudentId != null) {
+                    TextButton(
+                        onClick = vm::clearEnrollment,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Cancel") }
+                    Button(
+                        onClick = vm::save,
+                        enabled = !state.busy && state.shots.size >= state.minShots && state.name.isNotBlank(),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            when {
+                                state.reenrollStudentId != null -> "Update face"
+                                else -> "Save student"
+                            }
+                        )
+                    }
+                } else {
+                    TextButton(
+                        onClick = onDone,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Close") }
+                }
             }
             SnackbarHost(snack)
         }
@@ -242,6 +315,8 @@ private fun CapturePanel(
     shots: Int,
     max: Int,
     busy: Boolean,
+    lensFacing: Int,
+    onToggleCamera: () -> Unit,
     onCapture: (android.graphics.Bitmap) -> Unit,
 ) {
     val context = LocalContext.current
@@ -258,17 +333,37 @@ private fun CapturePanel(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(lensFacing) {
         val provider = context.awaitCameraProvider()
-        val preview = Preview.Builder().build().also {
+        val preview = androidx.camera.core.Preview.Builder().build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
-        provider.bindWithFallback(lifecycleOwner, preview, imageCapture)
+        val selector = androidx.camera.core.CameraSelector.Builder()
+            .requireLensFacing(lensFacing).build()
+        provider.unbindAll()
+        provider.bindToLifecycle(lifecycleOwner, selector, preview, imageCapture)
     }
 
     Column {
-        Text(hint, style = MaterialTheme.typography.titleMedium)
-        Text("Photo ${shots.coerceAtMost(max)} / $max  Â·  ${pose.prompt}", style = MaterialTheme.typography.bodySmall)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(hint, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Photo ${shots.coerceAtMost(max)} / $max  ·  ${pose.prompt}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            IconButton(onClick = onToggleCamera) {
+                Icon(
+                    imageVector = Icons.Outlined.FlipCameraAndroid,
+                    contentDescription = "Toggle camera"
+                )
+            }
+        }
         Spacer(Modifier.height(8.dp))
         Box(
             Modifier
@@ -278,7 +373,11 @@ private fun CapturePanel(
         ) {
             AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
             if (busy) {
-                LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
+                LinearProgressIndicator(
+                    Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                )
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -291,7 +390,7 @@ private fun CapturePanel(
             },
             enabled = !busy && pose != PoseStep.Done,
             modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "Processingâ€¦" else "Capture this pose") }
+        ) { Text(if (busy) "Processing…" else "Capture this pose") }
     }
 }
 
@@ -321,3 +420,63 @@ private fun ShotDots(count: Int, max: Int) {
         }
     }
 }
+
+@Composable
+private fun StudentStatusList(
+    students: List<Student>,
+    onEnrollFace: (Student) -> Unit,
+) {
+    if (students.isEmpty()) {
+        Text(
+            "No students found. Import an Excel file or enroll a new student.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        students.forEach { student ->
+            val isActive = student.embeddingCount > 0
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.medium)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(student.name, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        student.studentId,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (isActive) {
+                    InputChip(
+                        selected = true,
+                        onClick = { },
+                        label = { Text("Active") },
+                        trailingIcon = {
+                            Icon(
+                                Icons.Outlined.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    )
+                } else {
+                    Button(onClick = { onEnrollFace(student) }) {
+                        Text("Enroll face")
+                    }
+                }
+            }
+        }
+    }
+}
+
+

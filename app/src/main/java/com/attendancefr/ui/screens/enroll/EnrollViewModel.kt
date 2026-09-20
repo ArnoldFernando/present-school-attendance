@@ -1,9 +1,12 @@
 package com.attendancefr.ui.screens.enroll
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.attendancefr.data.imports.ExcelStudentImporter
 import com.attendancefr.data.prefs.SettingsRepository
 import com.attendancefr.data.repository.ClassRepository
 import com.attendancefr.data.repository.StudentRepository
@@ -13,6 +16,7 @@ import com.attendancefr.ml.FaceEmbeddingEngine
 import com.attendancefr.ml.ImageUtils
 import com.attendancefr.ml.QualityAnalyzer
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,14 +41,17 @@ data class CapturedShot(
 
 data class EnrollUiState(
     val reenrollStudentId: Long? = null,
+    val isManualEnrollment: Boolean = false,
     val name: String = "",
     val roll: String = "",
     val classNames: List<String> = emptyList(),
     val classes: List<ClassSection> = emptyList(),
+    val students: List<com.attendancefr.domain.model.Student> = emptyList(),
     val pose: PoseStep = PoseStep.Straight,
     val shots: List<CapturedShot> = emptyList(),
     val hint: String = PoseStep.Straight.prompt,
     val busy: Boolean = false,
+    val isImporting: Boolean = false,
     val error: String? = null,
     val modelMissing: Boolean = false,
     val saved: Boolean = false,
@@ -54,6 +61,7 @@ data class EnrollUiState(
 
 @HiltViewModel
 class EnrollViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle,
     private val students: StudentRepository,
     private val classes: ClassRepository,
@@ -91,6 +99,96 @@ class EnrollViewModel @Inject constructor(
                 }
             }
         }
+        loadStudents()
+    }
+
+    fun loadStudents() {
+        viewModelScope.launch {
+            students.observeStudents().collect { list ->
+                _state.update { it.copy(students = list) }
+            }
+        }
+    }
+
+    fun importStudents(uri: Uri) {
+        viewModelScope.launch {
+            _state.update { it.copy(isImporting = true, error = null) }
+            try {
+                val rows = withContext(Dispatchers.IO) {
+                    ExcelStudentImporter.read(context, uri)
+                }
+                val targetClass = _state.value.classes.firstOrNull()?.name
+                    ?: run {
+                        _state.update {
+                            it.copy(isImporting = false, error = "Create at least one class before importing.")
+                        }
+                        return@launch
+                    }
+
+                var count = 0
+                rows.forEach { row ->
+                    val added = students.importIfNotExists(
+                        studentId = row.rollNumber,
+                        name = row.name,
+                        classNames = listOf(targetClass)
+                    )
+                    if (added) count++
+                }
+                _state.update {
+                    it.copy(
+                        isImporting = false,
+                        error = "Imported $count students. ${rows.size - count} duplicates skipped."
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(isImporting = false, error = e.message ?: "Import failed") }
+            }
+        }
+    }
+
+    fun startManualEnrollment() {
+        _state.update {
+            it.copy(
+                isManualEnrollment = true,
+                reenrollStudentId = null,
+                name = "",
+                roll = "",
+                shots = emptyList(),
+                pose = PoseStep.Straight,
+                hint = PoseStep.Straight.prompt,
+                error = null,
+                saved = false,
+            )
+        }
+    }
+
+    fun selectStudentForEnrollment(student: com.attendancefr.domain.model.Student) {
+        _state.update {
+            it.copy(
+                reenrollStudentId = student.id,
+                name = student.name,
+                roll = student.studentId,
+                classNames = student.classNames.ifEmpty { listOf(student.className) },
+                shots = emptyList(),
+                pose = PoseStep.Straight,
+                hint = PoseStep.Straight.prompt,
+                error = null,
+                saved = false,
+            )
+        }
+    }
+
+    fun clearEnrollment() {
+        _state.update {
+            EnrollUiState(
+                classes = it.classes,
+                classNames = it.classNames,
+                modelMissing = it.modelMissing,
+                minShots = it.minShots,
+                maxShots = it.maxShots,
+                students = it.students,
+            )
+        }
     }
 
     fun onName(v: String) = _state.update { it.copy(name = v, error = null) }
@@ -121,7 +219,7 @@ class EnrollViewModel @Inject constructor(
         val s = _state.value
         if (s.busy || s.shots.size >= s.maxShots) return
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null, hint = "Checking photoâ€¦") }
+            _state.update { it.copy(busy = true, error = null, hint = "Checking photo…") }
             val result = withContext(Dispatchers.Default) {
                 runCatching {
                     val scaled = ImageUtils.downscaleIfNeeded(bitmap, 960)
@@ -163,7 +261,7 @@ class EnrollViewModel @Inject constructor(
                             shots = nextShots,
                             pose = nextPose,
                             hint = if (nextPose == PoseStep.Done)
-                                "All set â€” tap Save student."
+                                "All set — tap Save student."
                             else nextPose.prompt,
                             error = null,
                         )

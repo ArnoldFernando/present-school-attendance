@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import javax.inject.Inject
 import javax.inject.Singleton
-import com.attendancefr.data.local.entity.ClassSectionEntity
 
 @Singleton
 class StudentRepository @Inject constructor(
@@ -85,6 +84,27 @@ class StudentRepository @Inject constructor(
         return id
     }
 
+    suspend fun importIfNotExists(
+        studentId: String,
+        name: String,
+        classNames: List<String>,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (studentDao.getByRoll(studentId) != null) return false
+
+        val entity = StudentEntity(
+            studentId = studentId,
+            name = name,
+            className = classNames.firstOrNull().orEmpty(),
+            dateEnrolled = now,
+        )
+        val id = studentDao.insert(entity)
+        classNames.distinct().forEach { className ->
+            studentDao.insertStudentClass(StudentClassCrossRef(studentId = id, className = className))
+        }
+        return true
+    }
+
     suspend fun updateDetails(id: Long, studentId: String, name: String, classNames: List<String>) {
         val current = studentDao.getById(id) ?: return
         studentDao.update(
@@ -124,37 +144,33 @@ class StudentRepository @Inject constructor(
     suspend fun getAllEmbeddings(): List<Pair<Long, FloatArray>> =
         embeddingDao.getAll().map { it.studentId to EmbeddingCodec.toFloats(it.embeddingVector) }
 
-   private fun com.attendancefr.data.local.relation.StudentWithClasses.toDomain(count: Int) = Student(
-    id = student.id,
-    studentId = student.studentId,
-    name = student.name,
-    className = student.className,
-    classNames = classes.map { it.className },
-    dateEnrolled = student.dateEnrolled,
-    embeddingCount = count,
-)
+    private fun com.attendancefr.data.local.relation.StudentWithClasses.toDomain(count: Int) = Student(
+        id = student.id,
+        studentId = student.studentId,
+        name = student.name,
+        className = student.className,
+        classNames = classes.map { it.className },
+        dateEnrolled = student.dateEnrolled,
+        embeddingCount = count,
+    )
 
-private fun StudentEntity.toDomain(count: Int, classes: List<String>) = Student(
-    id = id,
-    studentId = studentId,
-    name = name,
-    className = className,
-    classNames = classes,
-    dateEnrolled = dateEnrolled,
-    embeddingCount = count,
-)
+    private fun StudentEntity.toDomain(count: Int, classes: List<String>) = Student(
+        id = id,
+        studentId = studentId,
+        name = name,
+        className = className,
+        classNames = classes,
+        dateEnrolled = dateEnrolled,
+        embeddingCount = count,
+    )
 
-// Needed for the search() function which returns plain StudentEntity
-private fun StudentEntity.toDomain(count: Int) = Student(
-    id = id,
-    studentId = studentId,
-    name = name,
-    className = className,
-    classNames = emptyList(),
-    dateEnrolled = dateEnrolled,
-    embeddingCount = count,
-)
-
-
-
+    private fun StudentEntity.toDomain(count: Int) = Student(
+        id = id,
+        studentId = studentId,
+        name = name,
+        className = className,
+        classNames = emptyList(),
+        dateEnrolled = dateEnrolled,
+        embeddingCount = count,
+    )
 }
