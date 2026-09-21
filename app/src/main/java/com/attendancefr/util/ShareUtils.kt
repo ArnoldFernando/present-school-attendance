@@ -1,4 +1,4 @@
-package com.attendancefr.util
+﻿package com.attendancefr.util
 
 import android.content.Context
 import android.content.Intent
@@ -16,9 +16,10 @@ object ShareUtils {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = mime
             putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, chooserTitle))
+        val chooser = Intent.createChooser(intent, chooserTitle)
+        chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(chooser)
     }
 
     fun shareUri(context: Context, uri: Uri, mime: String, chooserTitle: String = "Share") {
@@ -27,6 +28,8 @@ object ShareUtils {
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, chooserTitle))
+        val chooser = Intent.createChooser(intent, chooserTitle)
+        chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(chooser)
     }
 }

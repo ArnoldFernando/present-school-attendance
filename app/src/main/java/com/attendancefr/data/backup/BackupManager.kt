@@ -15,16 +15,6 @@ import java.util.zip.ZipOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Offline backup / restore of the entire Room database (including WAL/SHM
- * sidecars). The resulting .afrbak zip can be shared via the system share
- * sheet and re-imported on another device — this is the documented
- * multi-device "sync" path.
- *
- * Backup never closes the live database (a WAL checkpoint is enough).
- * Restore *does* close it and then requires a process restart so Room
- * reopens the replaced files cleanly.
- */
 @Singleton
 class BackupManager @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -53,35 +43,56 @@ class BackupManager @Inject constructor(
     }
 
     /**
-     * Replaces the live database with the contents of [backupFile].
-     * Always throws [NeedsRestart] on success so the UI can finishAffinity
-     * and relaunch.
+     * Restores from either:
+     * 1. A .afrbak ZIP file (the proper backup format)
+     * 2. A raw .db file (user picked the extracted database)
+     * 3. A .afrbak.zip file (some apps rename shared backups)
      */
     fun restore(backupFile: File) {
         require(backupFile.exists()) { "Backup file not found." }
+
+        val isZip = backupFile.name.endsWith(".afrbak")
+                || backupFile.name.endsWith(".afrbak.zip")
+                || backupFile.name.endsWith(".zip")
+
         checkpoint()
         database.close()
 
         val dbFile = context.getDatabasePath(AttendanceDatabase.NAME)
         val wal = File(dbFile.path + "-wal")
         val shm = File(dbFile.path + "-shm")
+
         wal.delete()
         shm.delete()
 
-        ZipInputStream(FileInputStream(backupFile)).use { zip ->
-            var entry = zip.nextEntry
-            while (entry != null) {
-                val target = when {
-                    entry.name.endsWith("-wal") -> wal
-                    entry.name.endsWith("-shm") -> shm
-                    else -> dbFile
+        if (isZip) {
+            // Restore from ZIP
+            ZipInputStream(FileInputStream(backupFile)).use { zip ->
+                var entry = zip.nextEntry
+                while (entry != null) {
+                    val target = when {
+                        entry.name.endsWith("-wal") -> wal
+                        entry.name.endsWith("-shm") -> shm
+                        else -> dbFile
+                    }
+                    target.parentFile?.mkdirs()
+                    FileOutputStream(target).use { zip.copyTo(it) }
+                    zip.closeEntry()
+                    entry = zip.nextEntry
                 }
-                target.parentFile?.mkdirs()
-                FileOutputStream(target).use { zip.copyTo(it) }
-                zip.closeEntry()
-                entry = zip.nextEntry
+            }
+        } else {
+            // User picked a raw .db file - copy it directly
+            backupFile.inputStream().use { input ->
+                dbFile.outputStream().use { output -> input.copyTo(output) }
             }
         }
+
+        // Ensure files exist
+        if (!dbFile.exists()) {
+            throw IllegalStateException("Restore failed: database file was not created.")
+        }
+
         throw NeedsRestart()
     }
 
@@ -93,5 +104,5 @@ class BackupManager @Inject constructor(
         }
     }
 
-    class NeedsRestart : RuntimeException("Database restored — process restart required.")
+    class NeedsRestart : RuntimeException("Database restored - process restart required.")
 }

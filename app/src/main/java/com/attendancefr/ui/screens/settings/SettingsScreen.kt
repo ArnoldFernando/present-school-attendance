@@ -1,4 +1,4 @@
-package com.attendancefr.ui.screens.settings
+﻿package com.attendancefr.ui.screens.settings
 
 import android.app.Activity
 import android.net.Uri
@@ -18,6 +18,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -37,6 +38,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.attendancefr.data.backup.BackupManager
+import com.attendancefr.data.export.StudentFaceExporter
+import com.attendancefr.data.imports.StudentFaceImporter
 import com.attendancefr.data.prefs.SettingsRepository
 import com.attendancefr.data.repository.ClassRepository
 import com.attendancefr.domain.model.ClassSection
@@ -45,6 +48,7 @@ import com.attendancefr.util.ShareUtils
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -58,6 +62,7 @@ data class SettingsUiState(
     val modelAvailable: Boolean = false,
     val embeddingDim: Int? = null,
     val message: String? = null,
+    val lastStudentExport: File? = null,
 )
 
 @HiltViewModel
@@ -66,15 +71,19 @@ class SettingsViewModel @Inject constructor(
     private val classes: ClassRepository,
     private val backup: BackupManager,
     private val engine: FaceEmbeddingEngine,
+    private val studentFaceExporter: StudentFaceExporter,
+    private val studentFaceImporter: StudentFaceImporter,
 ) : ViewModel() {
 
     private val message = MutableStateFlow<String?>(null)
+    private val _lastStudentExport = MutableStateFlow<File?>(null)
 
     val state = combine(
         settings.confidenceThreshold,
         classes.observeAll(),
         message,
-    ) { threshold, cls, msg ->
+        _lastStudentExport,
+    ) { threshold, cls, msg, exportFile ->
         SettingsUiState(
             threshold = threshold,
             classes = cls,
@@ -86,6 +95,7 @@ class SettingsViewModel @Inject constructor(
                 }.getOrNull()
             } else null,
             message = msg,
+            lastStudentExport = exportFile,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
@@ -134,6 +144,34 @@ class SettingsViewModel @Inject constructor(
     fun consumeMessage() {
         message.value = null
     }
+
+    fun exportStudentFaces() {
+        viewModelScope.launch {
+            try {
+                val result = studentFaceExporter.export()
+                _lastStudentExport.value = result.file
+                message.value = "Exported ${result.studentCount} students with ${result.embeddingCount} face embeddings."
+            } catch (t: Throwable) {
+                message.value = "Export failed: ${t.message}"
+            }
+        }
+    }
+
+    fun importStudentFaces(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val result = studentFaceImporter.import(uri)
+                message.value = "Imported ${result.studentsImported} students, ${result.embeddingsImported} embeddings. ${result.studentsSkipped} duplicates skipped."
+            } catch (t: Throwable) {
+                message.value = "Import failed: ${t.message}"
+            }
+        }
+    }
+
+    fun shareLastStudentExport(context: android.content.Context) {
+        val file = _lastStudentExport.value ?: return
+        ShareUtils.shareFile(context, file, "application/json", "Share AttendanceFR student faces")
+    }
 }
 
 @Composable
@@ -148,11 +186,17 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val tmp = File(context.cacheDir, "restore-import.afrbak")
+        val ext = uri.lastPathSegment?.substringAfterLast(".", "afrbak") ?: "afrbak"; val tmp = File(context.cacheDir, "restore-import.$ext")
         context.contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(tmp).use { input.copyTo(it) }
         }
         confirmRestore = tmp
+    }
+
+    val faceExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { vm.importStudentFaces(it) }
     }
 
     Column(
@@ -188,7 +232,7 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                 Text("On-device model", style = MaterialTheme.typography.titleMedium)
                 Text(
                     if (state.modelAvailable)
-                        "mobile_face_net.tflite loaded" + (state.embeddingDim?.let { " · ${it}-d embeddings" } ?: "")
+                        "mobile_face_net.tflite loaded" + (state.embeddingDim?.let { " . ${it}-d embeddings" } ?: "")
                     else
                         "Model file missing. Copy mobile_face_net.tflite into app/src/main/assets/ and rebuild. Details in SETUP.md.",
                     style = MaterialTheme.typography.bodySmall,
@@ -243,18 +287,19 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Backup & restore", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Exports the full Room database to a local .afrbak file. Share it (email, Drive, USB, Bluetooth) and import it on another device to copy enrollments and records. This is the only multi-device sync path — there is no cloud.",
+                    "Full database backup copies everything including attendance history. Student faces export only enrollments and embeddings (no attendance records).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
+
                 Button(
                     onClick = {
                         val file = vm.backupNow()
                         pendingBackup = file
                     },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Create backup") }
+                ) { Text("Create .afrbak backup") }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = {
@@ -264,12 +309,34 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                     },
                     enabled = pendingBackup != null,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Share last backup") }
+                ) { Text("Share last .afrbak backup") }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = { restorePicker.launch("*/*") },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Restore from file") }
+                ) { Text("Restore from .afrbak file") }
+
+                Spacer(Modifier.height(16.dp))
+                Divider()
+                Spacer(Modifier.height(16.dp))
+
+                Text("Student faces only", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = vm::exportStudentFaces,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Export students + faces") }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { vm.shareLastStudentExport(context) },
+                    enabled = state.lastStudentExport != null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Share last student export") }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { faceExportLauncher.launch("application/json") },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Import students + faces") }
             }
         }
 
@@ -280,7 +347,7 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
 
         Spacer(Modifier.height(24.dp))
         Text(
-            "AttendanceFR v0.1.0  ·  fully offline  ·  data never leaves this device unless you export it.",
+            "AttendanceFR v0.1.0  .  fully offline  .  data never leaves this device unless you export it.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -308,3 +375,4 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
         )
     }
 }
+
