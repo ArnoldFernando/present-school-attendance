@@ -48,6 +48,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,20 +76,23 @@ fun ReportsScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = state.classFilter == null,
-                onClick = { vm.onFilter(null) },
-                label = { Text("All classes") }
-            )
-            state.classes.forEach { name ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.horizontalScroll(rememberScrollState())
+            ) {
                 FilterChip(
-                    selected = state.classFilter == name,
-                    onClick = { vm.onFilter(name) },
-                    label = { Text(name) }
+                    selected = state.classFilter == null,
+                    onClick = { vm.onFilter(null) },
+                    label = { Text("All classes") }
                 )
+                state.classes.forEach { name ->
+                    FilterChip(
+                        selected = state.classFilter == name,
+                        onClick = { vm.onFilter(name) },
+                        label = { Text(name) }
+                    )
+                }
             }
-        }
         Spacer(Modifier.height(8.dp))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

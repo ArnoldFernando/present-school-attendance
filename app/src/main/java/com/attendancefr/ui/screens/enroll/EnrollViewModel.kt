@@ -40,6 +40,7 @@ data class CapturedShot(
 )
 
 data class EnrollUiState(
+    val showImportGuide: Boolean = false,
     val reenrollStudentId: Long? = null,
     val isManualEnrollment: Boolean = false,
     val name: String = "",
@@ -78,10 +79,10 @@ class EnrollViewModel @Inject constructor(
     init {
         _state.update { it.copy(modelMissing = !engine.isModelAvailable) }
         viewModelScope.launch {
-            classes.observeAll().collect { list ->
+                    classes.observeAll().collect { list ->
                 _state.update { s ->
                     s.copy(
-                        classes = list,
+                        classes = list.filter { it.name.isNotBlank() },
                         classNames = s.classNames.ifEmpty { listOfNotNull(list.firstOrNull()?.name) },
                     )
                 }
@@ -182,6 +183,28 @@ class EnrollViewModel @Inject constructor(
                 error = null,
                 saved = false,
             )
+        }
+    }
+
+    fun showImportGuide() = _state.update { it.copy(showImportGuide = true) }
+    fun hideImportGuide() = _state.update { it.copy(showImportGuide = false) }
+
+    fun downloadTemplate() {
+        viewModelScope.launch {
+            try {
+                val templateContent = """Full name,Student ID,Class
+"Lastname, Firstname MiddleInitial",26-00001,1B
+"Delos Santos, Juan A.",26-00002,1B
+"Garcia, Maria Clara S.",26-00003,1A
+"Lastname, Firstname",26-00004,2A
+"""
+                val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val outFile = java.io.File(downloadsDir, "AttendanceFR_Student_Template.csv")
+                outFile.writeText(templateContent)
+                _state.update { it.copy(error = "Template saved to Downloads: ${outFile.name}", showImportGuide = false) }
+            } catch (e: Exception) {
+                _state.update { it.copy(error = "Could not save template: ${e.message}") }
+            }
         }
     }
 
@@ -324,4 +347,7 @@ class EnrollViewModel @Inject constructor(
         data class Rejected(val reason: String) : CaptureOutcome()
     }
 }
+
+
+
 

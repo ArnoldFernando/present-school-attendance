@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -27,7 +28,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FlipCameraAndroid
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -54,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -97,6 +102,7 @@ fun EnrollScreen(
                     .padding(16.dp)
             ) {
                 if (!state.isManualEnrollment && state.reenrollStudentId == null) {
+                    // LIST MODE
                     Text("Students", style = MaterialTheme.typography.headlineSmall)
                     Spacer(Modifier.height(12.dp))
                     OutlinedButton(
@@ -104,7 +110,7 @@ fun EnrollScreen(
                         enabled = !state.isImporting,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(if (state.isImporting) "Importing…" else "Import student list from Excel")
+                        Text(if (state.isImporting) "Importing…" else "Import student list from Excel/CSV")
                     }
                     Spacer(Modifier.height(8.dp))
                     Button(
@@ -113,12 +119,20 @@ fun EnrollScreen(
                     ) {
                         Text("Enroll new student")
                     }
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
+                        onClick = vm::showImportGuide,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("How to import students?")
+                    }
                     Spacer(Modifier.height(16.dp))
                     StudentStatusList(
                         students = state.students,
                         onEnrollFace = vm::selectStudentForEnrollment,
                     )
                 } else {
+                    // ENROLLMENT MODE
                     Text(
                         if (state.reenrollStudentId == null) "Enroll student" else "Enroll face",
                         style = MaterialTheme.typography.headlineSmall,
@@ -223,8 +237,88 @@ fun EnrollScreen(
                 }
             }
             SnackbarHost(snack)
+
+            // Import Guide Dialog
+            if (state.showImportGuide) {
+                ImportGuideDialog(
+                    onDismiss = vm::hideImportGuide,
+                    onDownloadTemplate = vm::downloadTemplate,
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun ImportGuideDialog(
+    onDismiss: () -> Unit,
+    onDownloadTemplate: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("How to Import Students") },
+        text = {
+            Column {
+                Text(
+                    "Follow these steps to import students from a file:",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(12.dp))
+
+                val steps = listOf(
+                    "1. Create a file with 3 columns: Full name, Student ID, and Class.",
+                    "2. Save the file as .csv (Comma Separated Values) or .xls (Excel 97-2003).",
+                    "3. Do NOT use .xlsx format — it is not supported on Android.",
+                    "4. Names should be in format: Lastname, Firstname M.I.",
+                    "5. Each row is one student. Duplicate Student IDs will be skipped.",
+                    "6. Tap the download button below to get a template file.",
+                )
+                steps.forEach { step ->
+                    Text(
+                        text = "• $step",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(vertical = 3.dp),
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                Text("Example format:", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(4.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(
+                            "Full name,Student ID,Class",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            """"Lastname, Firstname",26-00001,1B""",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            """"Delos Santos, Juan A.",26-00002,1B""",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDownloadTemplate) {
+                Text("Download Template")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -428,7 +522,7 @@ private fun StudentStatusList(
 ) {
     if (students.isEmpty()) {
         Text(
-            "No students found. Import an Excel file or enroll a new student.",
+            "No students found. Import an Excel/CSV file or enroll a new student.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -441,7 +535,10 @@ private fun StudentStatusList(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(MaterialTheme.shapes.medium)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                    .background(
+                        if (isActive) Color(0xFF81C784).copy(alpha = 0.25f)
+                        else Color(0xFFFFF176).copy(alpha = 0.35f)
+                    )
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -478,5 +575,3 @@ private fun StudentStatusList(
         }
     }
 }
-
-

@@ -67,7 +67,6 @@ class ReportsViewModel @Inject constructor(
     private val recordsFlow = combine(from, to) { f, t -> f to t }
         .flatMapLatest { (f, t) -> attendance.observeInRange(f, t) }
 
-    // Combine data sources first
     private val dataFlow = combine(
         students.observeStudents(),
         recordsFlow,
@@ -76,7 +75,6 @@ class ReportsViewModel @Inject constructor(
         Triple(studentList, records, classes)
     }
 
-    // Combine UI state separately
     private val uiStateFlow = combine(
         classFilter,
         from,
@@ -106,15 +104,26 @@ class ReportsViewModel @Inject constructor(
         val error: String?,
     )
 
-     val state: StateFlow<ReportsUiState> = combine(dataFlow, uiStateFlow) { data, ui ->
+    val state: StateFlow<ReportsUiState> = combine(dataFlow, uiStateFlow) { data, ui ->
         val (studentList, records, classes) = data
-        // Fix 1: Use classNames list for student filtering
+
+        // Only show classes that actually have attendance records in the selected date range
+        val activeClasses = classes.map { it.name }
+            .filter { name ->
+                name.isNotBlank() && records.any { rec ->
+                    rec.className == name ||
+                    (rec.className.isBlank() && studentList.find { it.id == rec.studentId }?.let { s ->
+                        s.classNames.contains(name) || s.className == name
+                    } == true)
+                }
+            }
+            .sortedBy { it.lowercase() }
+
         val filteredStudents = studentList.filter { ui.classFilter == null || it.classNames.contains(ui.classFilter) }
-        // Fix 2: Also filter records by their own className
-               val recs = records.filter { rec ->
+        val recs = records.filter { rec ->
             val student = filteredStudents.find { it.id == rec.studentId }
             student != null && (
-                ui.classFilter == null || 
+                ui.classFilter == null ||
                 rec.className == ui.classFilter ||
                 (rec.className.isEmpty() && student.className == ui.classFilter)
             )
@@ -130,7 +139,7 @@ class ReportsViewModel @Inject constructor(
             StudentStat(s, present, late, absent, sessions)
         }.sortedBy { it.student.name.lowercase() }
         ReportsUiState(
-            classes = classes.map { it.name },
+            classes = activeClasses,
             classFilter = ui.classFilter,
             from = ui.from,
             to = ui.to,
