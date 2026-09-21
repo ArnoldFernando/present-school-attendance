@@ -1,6 +1,8 @@
 package com.attendancefr.ui.screens.students
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,9 +11,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Delete
@@ -38,6 +43,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -97,10 +104,18 @@ fun StudentsScreen(
                 }
             }
             Spacer(Modifier.height(8.dp))
+
+            // Legend
+            LegendRow(
+                completeCount = state.students.count { it.isComplete() },
+                incompleteCount = state.students.count { !it.isComplete() },
+            )
+            Spacer(Modifier.height(8.dp))
+
             if (state.students.isEmpty()) {
                 EmptyState(
                     title = "No students yet",
-                    body = "Enroll a student with 3â€“5 face photos to start taking attendance offline.",
+                    body = "Enroll a student with 3–5 face photos to start taking attendance offline.",
                     actionLabel = "Enroll first student",
                     onAction = onAdd,
                 )
@@ -139,13 +154,61 @@ fun StudentsScreen(
 }
 
 @Composable
+private fun LegendRow(completeCount: Int, incompleteCount: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        LegendItem(
+            color = Color(0xFF81C784), // soft green
+            label = "Complete ($completeCount)",
+        )
+        LegendItem(
+            color = Color(0xFFFFF176), // soft yellow
+            label = "Incomplete ($incompleteCount)",
+        )
+    }
+}
+
+@Composable
+private fun LegendItem(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(14.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
 private fun StudentCard(
     student: Student,
     onEdit: () -> Unit,
     onReEnroll: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+    val isComplete = student.isComplete()
+    val cardColor = if (isComplete) {
+        Color(0xFF81C784).copy(alpha = 0.25f) // soft green tint
+    } else {
+        Color(0xFFFFF176).copy(alpha = 0.35f) // soft yellow tint
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = cardColor,
+        ),
+    ) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -154,14 +217,14 @@ private fun StudentCard(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(student.name, style = MaterialTheme.typography.titleMedium)
-                                val classesText = student.classNames.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: student.className
+                val classesText = student.classNames.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: student.className
                 Text(
-                    "${student.studentId}  Â·  $classesText",
+                    "${student.studentId}  ·  $classesText",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "${student.embeddingCount} face shot${if (student.embeddingCount == 1) "" else "s"}  Â·  enrolled ${DateUtils.formatDateTime(student.dateEnrolled)}",
+                    "${student.embeddingCount} face shot${if (student.embeddingCount == 1) "" else "s"}  ·  enrolled ${DateUtils.formatDateTime(student.dateEnrolled)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -177,4 +240,11 @@ private fun StudentCard(
             }
         }
     }
+}
+
+private fun Student.isComplete(): Boolean {
+    return name.isNotBlank()
+            && studentId.isNotBlank()
+            && (classNames.isNotEmpty() || className.isNotBlank())
+            && embeddingCount > 0
 }

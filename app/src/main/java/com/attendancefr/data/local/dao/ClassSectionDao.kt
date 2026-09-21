@@ -31,4 +31,11 @@ interface ClassSectionDao {
 
     @Query("DELETE FROM class_sections WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("SELECT * FROM class_sections WHERE name = :name LIMIT 1")
+    suspend fun getByName(name: String): ClassSectionEntity?
+
+    @Query("DELETE FROM class_sections WHERE name = :name")
+    suspend fun deleteByName(name: String)
 }
+

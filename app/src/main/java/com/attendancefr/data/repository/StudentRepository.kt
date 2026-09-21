@@ -138,6 +138,16 @@ class StudentRepository @Inject constructor(
         studentDao.deleteById(id)
     }
 
+
+    suspend fun addClassToStudent(studentId: Long, className: String) {
+        studentDao.insertStudentClass(StudentClassCrossRef(studentId, className.trim()))
+    }
+
+    suspend fun getClassesForStudent(studentId: Long): List<String> {
+        return studentDao.getClassesForStudent(studentId)
+    }
+
+    suspend fun getActiveClassNames(): List<String> = studentDao.getActiveClassNames()
     suspend fun getEmbeddingsForStudent(studentId: Long): List<FloatArray> =
         embeddingDao.getForStudent(studentId).map { EmbeddingCodec.toFloats(it.embeddingVector) }
 
@@ -174,3 +184,5 @@ class StudentRepository @Inject constructor(
         embeddingCount = count,
     )
 }
+
+

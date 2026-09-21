@@ -30,5 +30,15 @@ class ClassRepository @Inject constructor(
 
     suspend fun delete(id: Long) = dao.deleteById(id)
 
+    suspend fun removeEmptyClasses(activeNames: List<String>) {
+        val allClasses = dao.getAll()
+        allClasses.forEach { cls ->
+            if (cls.name !in activeNames) {
+                dao.deleteByName(cls.name)
+            }
+        }
+    }
+
     private fun ClassSectionEntity.toDomain() = ClassSection(id = id, name = name)
 }
+

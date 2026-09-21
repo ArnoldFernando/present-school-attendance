@@ -48,6 +48,11 @@ class StudentsViewModel @Inject constructor(
     fun onFilter(v: String?) { classFilter.value = v }
 
     fun delete(id: Long) {
-        viewModelScope.launch { students.delete(id) }
+        viewModelScope.launch {
+            students.delete(id)
+            val activeClasses = students.getActiveClassNames()
+            classes.removeEmptyClasses(activeClasses)
+        }
     }
 }
+

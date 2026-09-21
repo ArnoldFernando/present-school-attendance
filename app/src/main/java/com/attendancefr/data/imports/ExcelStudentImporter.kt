@@ -8,6 +8,7 @@ import org.apache.poi.hssf.usermodel.HSSFWorkbook
 data class ImportedStudentRow(
     val name: String,
     val rollNumber: String,
+    val className: String,
 )
 
 object ExcelStudentImporter {
@@ -46,14 +47,17 @@ object ExcelStudentImporter {
 
             var nameCol = -1
             var idCol = -1
+            var classCol = -1
 
             headerRow.cellIterator().forEach { cell ->
                 val header = cell.stringCellValue.trim().lowercase()
                 when {
                     header in setOf("full name", "name", "full_name", "student name") ->
                         nameCol = cell.columnIndex
-                    header in setOf("student id", "id", "student_id", "roll number", "roll", "roll_no") ->
+                    header in setOf("student id", "id", "student_id", "roll number", "roll", "roll_no", "code") ->
                         idCol = cell.columnIndex
+                    header in setOf("class", "class name", "class_name", "section", "class section") ->
+                        classCol = cell.columnIndex
                 }
             }
 
@@ -64,8 +68,9 @@ object ExcelStudentImporter {
                 val row = sheet.getRow(i) ?: continue
                 val name = row.getCell(nameCol)?.toString()?.trim() ?: continue
                 val roll = row.getCell(idCol)?.toString()?.trim() ?: continue
+                val cls = if (classCol >= 0) row.getCell(classCol)?.toString()?.trim().orEmpty() else ""
                 if (name.isNotEmpty() && roll.isNotEmpty()) {
-                    results.add(ImportedStudentRow(name, roll))
+                    results.add(ImportedStudentRow(name, roll, cls))
                 }
             }
             workbook.close()
@@ -79,34 +84,59 @@ object ExcelStudentImporter {
             val lines = stream.bufferedReader().readLines()
             if (lines.isEmpty()) throw IllegalArgumentException("CSV file is empty")
 
-            // Strip BOM from first line if present
             val firstLine = lines[0].removePrefix("\uFEFF")
-            
-            // Try comma first, then semicolon
             val separator = if (firstLine.contains(",")) "," else if (firstLine.contains(";")) ";" else ","
-            
-            val headers = firstLine.split(separator).map { it.trim().lowercase().removeSurrounding("\"") }
-            
-            // Debug: show what headers were found
+            val headers = parseCsvLine(firstLine, separator).map { it.trim().lowercase() }
+
             val nameCol = headers.indexOfFirst { it in setOf("full name", "name", "full_name", "student name") }
-            val idCol = headers.indexOfFirst { it in setOf("student id", "id", "student_id", "roll number", "roll", "roll_no") }
+            val idCol = headers.indexOfFirst { it in setOf("student id", "id", "student_id", "roll number", "roll", "roll_no", "code") }
+            val classCol = headers.indexOfFirst { it in setOf("class", "class name", "class_name", "section", "class section") }
 
             if (nameCol == -1 || idCol == -1) {
                 val found = headers.joinToString(", ")
-                throw IllegalArgumentException("Could not find required columns. Found headers: [$found]. Expected: 'Full name' and 'Student ID'")
+                throw IllegalArgumentException("Could not find required columns. Found headers: [$found]. Expected: 'Full name', 'Student ID', and optionally 'Class'")
             }
 
             for (i in 1 until lines.size) {
-                val cols = lines[i].split(separator).map { it.trim().removeSurrounding("\"") }
+                val cols = parseCsvLine(lines[i], separator)
                 if (cols.size > maxOf(nameCol, idCol)) {
                     val name = cols[nameCol]
                     val roll = cols[idCol]
+                    val cls = if (classCol >= 0 && classCol < cols.size) cols[classCol] else ""
                     if (name.isNotEmpty() && roll.isNotEmpty()) {
-                        results.add(ImportedStudentRow(name, roll))
+                        results.add(ImportedStudentRow(name, roll, cls))
                     }
                 }
             }
         }
         return results.distinctBy { it.rollNumber }
+    }
+
+    private fun parseCsvLine(line: String, separator: String = ","): List<String> {
+        val result = mutableListOf<String>()
+        val sb = StringBuilder()
+        var inQuotes = false
+        var i = 0
+        while (i < line.length) {
+            val c = line[i]
+            when {
+                c == '"' -> {
+                    if (inQuotes && i + 1 < line.length && line[i + 1] == '"') {
+                        sb.append('"')
+                        i++
+                    } else {
+                        inQuotes = !inQuotes
+                    }
+                }
+                c.toString() == separator && !inQuotes -> {
+                    result.add(sb.toString().trim())
+                    sb.clear()
+                }
+                else -> sb.append(c)
+            }
+            i++
+        }
+        result.add(sb.toString().trim())
+        return result
     }
 }

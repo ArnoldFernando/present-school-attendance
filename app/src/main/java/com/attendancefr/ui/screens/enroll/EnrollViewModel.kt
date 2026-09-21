@@ -125,12 +125,19 @@ class EnrollViewModel @Inject constructor(
                         return@launch
                     }
 
+                // Collect unique class names from import and add them to repository
+                val importedClasses = rows.map { it.className }.filter { it.isNotBlank() }.distinct()
+                importedClasses.forEach { className ->
+                    runCatching { classes.add(className.trim()) }
+                }
+
                 var count = 0
                 rows.forEach { row ->
+                    val classList = if (row.className.isNotBlank()) listOf(row.className) else listOf(targetClass)
                     val added = students.importIfNotExists(
                         studentId = row.rollNumber,
                         name = row.name,
-                        classNames = listOf(targetClass)
+                        classNames = classList
                     )
                     if (added) count++
                 }
@@ -317,3 +324,4 @@ class EnrollViewModel @Inject constructor(
         data class Rejected(val reason: String) : CaptureOutcome()
     }
 }
+
