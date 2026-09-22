@@ -18,6 +18,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -63,6 +68,7 @@ data class SettingsUiState(
     val embeddingDim: Int? = null,
     val message: String? = null,
     val lastStudentExport: File? = null,
+    val studentExportClassFilter: String? = null,
 )
 
 @HiltViewModel
@@ -76,14 +82,16 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val message = MutableStateFlow<String?>(null)
-    private val _lastStudentExport = MutableStateFlow<File?>(null)
+        private val _lastStudentExport = MutableStateFlow<File?>(null)
+    private val _studentExportClassFilter = MutableStateFlow<String?>(null)
 
     val state = combine(
         settings.confidenceThreshold,
         classes.observeAll(),
         message,
         _lastStudentExport,
-    ) { threshold, cls, msg, exportFile ->
+        _studentExportClassFilter,
+    ) { threshold, cls, msg, exportFile, classFilter ->
         SettingsUiState(
             threshold = threshold,
             classes = cls,
@@ -96,6 +104,7 @@ class SettingsViewModel @Inject constructor(
             } else null,
             message = msg,
             lastStudentExport = exportFile,
+            studentExportClassFilter = classFilter,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
@@ -145,10 +154,14 @@ class SettingsViewModel @Inject constructor(
         message.value = null
     }
 
-    fun exportStudentFaces() {
+    
+    fun setStudentExportClassFilter(className: String?) {
+        _studentExportClassFilter.value = className
+    }
+    fun exportStudentFaces(className: String? = _studentExportClassFilter.value) {
         viewModelScope.launch {
             try {
-                val result = studentFaceExporter.export()
+                val result = studentFaceExporter.export(className)
                 _lastStudentExport.value = result.file
                 message.value = "Exported ${result.studentCount} students with ${result.embeddingCount} face embeddings."
             } catch (t: Throwable) {
@@ -175,6 +188,7 @@ class SettingsViewModel @Inject constructor(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -322,8 +336,44 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
 
                 Text("Student faces only", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(8.dp))
+
+                var expanded by remember { mutableStateOf(false) }
+                val classOptions = listOf("All classes") + state.classes.map { it.name }
+                val selectedLabel = state.studentExportClassFilter ?: "All classes"
+                ExposedDropdownMenuBox(
+                    expanded = expanded,
+                    onExpandedChange = { expanded = it },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    OutlinedTextField(
+                        value = selectedLabel,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Class to export") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
+                        singleLine = true,
+                    )
+                    DropdownMenu(
+                        expanded = expanded,
+                        onDismissRequest = { expanded = false },
+                        modifier = Modifier.exposedDropdownSize(),
+                    ) {
+                        classOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option) },
+                                onClick = {
+                                    vm.setStudentExportClassFilter(if (option == "All classes") null else option)
+                                    expanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
                 Button(
-                    onClick = vm::exportStudentFaces,
+                    onClick = { vm.exportStudentFaces() },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Export students + faces") }
                 Spacer(Modifier.height(8.dp))
@@ -375,4 +425,8 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
         )
     }
 }
+
+
+
+
 

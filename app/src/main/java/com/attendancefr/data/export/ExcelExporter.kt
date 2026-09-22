@@ -1,4 +1,4 @@
-package com.attendancefr.data.export
+﻿package com.attendancefr.data.export
 
 import android.content.ContentValues
 import android.content.Context
@@ -267,8 +267,8 @@ class ExcelExporter @Inject constructor(
         val sheet = wb.createSheet("Summary")
         val title = sheet.createRow(0)
         title.createCell(0).setCellValue(
-            "Attendance summary  ${request.fromDate} → ${request.toDate}" +
-                (request.className?.let { "  ·  $it" } ?: "  ·  All classes")
+            "Attendance summary  ${request.fromDate} â†’ ${request.toDate}" +
+                (request.className?.let { "  Â·  $it" } ?: "  Â·  All classes")
         )
 
         val headers = listOf(
@@ -310,3 +310,5 @@ class ExcelExporter @Inject constructor(
         sheet.setColumnWidth(1, 28 * 256)
     }
 }
+
+

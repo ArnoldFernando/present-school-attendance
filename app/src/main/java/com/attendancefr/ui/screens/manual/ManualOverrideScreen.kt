@@ -1,6 +1,10 @@
-package com.attendancefr.ui.screens.manual
+﻿package com.attendancefr.ui.screens.manual
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,8 +13,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.FilterChip
@@ -20,8 +27,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -41,6 +53,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.File
+import kotlin.math.absoluteValue
 import javax.inject.Inject
 
 data class ManualRow(
@@ -181,28 +195,79 @@ fun ManualOverrideScreen(
 }
 
 @Composable
+private fun StudentPhotoSmall(
+    photoPath: String?,
+    name: String,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 40.dp
+) {
+    val hasPhoto = !photoPath.isNullOrBlank() && File(photoPath).exists()
+    if (hasPhoto) {
+        val bitmap = remember(photoPath) {
+            BitmapFactory.decodeFile(photoPath)
+        }
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                modifier = modifier
+                    .size(size)
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop,
+            )
+            return
+        }
+    }
+    val initial = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    val colors = listOf(
+        Color(0xFF1B5E20), Color(0xFF0D47A1), Color(0xFFB71C1C),
+        Color(0xFFE65100), Color(0xFF4A148C), Color(0xFF006064),
+    )
+    val color = remember(name) { colors[name.hashCode().absoluteValue % colors.size] }
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(color),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(initial, color = Color.White, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
 private fun ManualRowCard(row: ManualRow, onMark: (AttendanceStatus) -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
     ) {
-        Text(row.student.name, style = MaterialTheme.typography.titleMedium)
-        Text(
-            buildString {
-                append(row.student.studentId)
-                append("  ·  ")
-                append(row.student.className)
-                row.status?.let {
-                    append("  ·  ")
-                    append(it.name)
-                    if (row.isManual) append(" (manual)")
-                    row.confidence?.let { c -> append("  ${"%.2f".format(c)}") }
-                } ?: append("  ·  not marked")
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StudentPhotoSmall(
+                photoPath = row.student.photoPath,
+                name = row.student.name,
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(row.student.name, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    buildString {
+                        append(row.student.studentId)
+                        append("  .  ")
+                        append(row.student.className)
+                        row.status?.let {
+                            append("  .  ")
+                            append(it.name)
+                            if (row.isManual) append(" (manual)")
+                            row.confidence?.let { c -> append("  ${"%.2f".format(c)}") }
+                        } ?: append("  .  not marked")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
                 selected = row.status == AttendanceStatus.Present,
@@ -222,3 +287,4 @@ private fun ManualRowCard(row: ManualRow, onMark: (AttendanceStatus) -> Unit) {
         }
     }
 }
+

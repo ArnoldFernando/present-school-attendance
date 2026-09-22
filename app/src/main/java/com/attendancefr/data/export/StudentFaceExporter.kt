@@ -1,4 +1,4 @@
-﻿package com.attendancefr.data.export
+package com.attendancefr.data.export
 
 import android.content.Context
 import android.os.Environment
@@ -30,12 +30,22 @@ class StudentFaceExporter @Inject constructor(
         val embeddingCount: Int,
     )
 
-    suspend fun export(): ExportSummary = withContext(Dispatchers.IO) {
-        val students = studentDao.getAll()
+    suspend fun export(className: String? = null): ExportSummary = withContext(Dispatchers.IO) {
+        val allStudents = studentDao.getAll()
+        val students = if (className.isNullOrBlank()) {
+            allStudents
+        } else {
+            allStudents.filter { student ->
+                val classes = studentDao.getClassesForStudent(student.id)
+                student.className == className || classes.contains(className)
+            }
+        }
+
         val json = JSONObject()
         json.put("version", 1)
         json.put("exportedAt", System.currentTimeMillis())
         json.put("app", "AttendanceFR")
+        json.put("classFilter", className ?: "all")
 
         val studentsArray = JSONArray()
         var totalEmbeddings = 0
@@ -69,7 +79,8 @@ class StudentFaceExporter @Inject constructor(
 
         val dir = File(context.cacheDir, "student_exports").apply { mkdirs() }
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-        val file = File(dir, "attendancefr_students_faces_$stamp.json")
+        val classPart = className?.replace(Regex("\\s+"), "_") ?: "all"
+        val file = File(dir, "attendancefr_students_faces_${classPart}_$stamp.json")
 
         FileOutputStream(file).use { out ->
             out.write(json.toString(2).toByteArray())
@@ -78,4 +89,3 @@ class StudentFaceExporter @Inject constructor(
         ExportSummary(file, students.size, totalEmbeddings)
     }
 }
-

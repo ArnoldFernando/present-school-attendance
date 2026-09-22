@@ -1,4 +1,4 @@
-package com.attendancefr.data.local.entity
+﻿package com.attendancefr.data.local.entity
 
 import androidx.room.Entity
 import androidx.room.Index
@@ -17,4 +17,6 @@ data class StudentEntity(
     val name: String,
     val className: String,
     val dateEnrolled: Long,
+    val photoPath: String? = null,
 )
+

@@ -1,8 +1,10 @@
 package com.attendancefr.ui.screens.reports
 
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.attendancefr.data.export.ClassRosterExporter
 import com.attendancefr.data.export.ExcelExporter
 import com.attendancefr.data.local.entity.AttendanceRecordEntity
 import com.attendancefr.data.repository.AttendanceRepository
@@ -44,6 +46,8 @@ data class ReportsUiState(
     val exporting: Boolean = false,
     val lastExportFile: File? = null,
     val lastExportUri: Uri? = null,
+    val rosterExporting: Boolean = false,
+    val lastRosterFile: File? = null,
     val error: String? = null,
 )
 
@@ -53,6 +57,7 @@ class ReportsViewModel @Inject constructor(
     private val attendance: AttendanceRepository,
     classesRepo: ClassRepository,
     private val exporter: ExcelExporter,
+    private val rosterExporter: ClassRosterExporter,
 ) : ViewModel() {
 
     private val classFilter = MutableStateFlow<String?>(null)
@@ -61,6 +66,8 @@ class ReportsViewModel @Inject constructor(
     private val exporting = MutableStateFlow(false)
     private val lastExportFile = MutableStateFlow<File?>(null)
     private val lastExportUri = MutableStateFlow<Uri?>(null)
+    private val rosterExporting = MutableStateFlow(false)
+    private val lastRosterFile = MutableStateFlow<File?>(null)
     private val error = MutableStateFlow<String?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -82,6 +89,8 @@ class ReportsViewModel @Inject constructor(
         exporting,
         lastExportFile,
         lastExportUri,
+        rosterExporting,
+        lastRosterFile,
         error,
     ) { array ->
         val cf = array[0] as String?
@@ -90,8 +99,10 @@ class ReportsViewModel @Inject constructor(
         val ex = array[3] as Boolean
         val file = array[4] as File?
         val uri = array[5] as Uri?
-        val err = array[6] as String?
-        UIState(cf, f, t, ex, file, uri, err)
+        val rosterEx = array[6] as Boolean
+        val rosterFile = array[7] as File?
+        val err = array[8] as String?
+        UIState(cf, f, t, ex, file, uri, rosterEx, rosterFile, err)
     }
 
     private data class UIState(
@@ -101,13 +112,14 @@ class ReportsViewModel @Inject constructor(
         val exporting: Boolean,
         val lastExportFile: File?,
         val lastExportUri: Uri?,
+        val rosterExporting: Boolean,
+        val lastRosterFile: File?,
         val error: String?,
     )
 
     val state: StateFlow<ReportsUiState> = combine(dataFlow, uiStateFlow) { data, ui ->
         val (studentList, records, classes) = data
 
-        // Only show classes that actually have attendance records in the selected date range
         val activeClasses = classes.map { it.name }
             .filter { name ->
                 name.isNotBlank() && records.any { rec ->
@@ -148,6 +160,8 @@ class ReportsViewModel @Inject constructor(
             exporting = ui.exporting,
             lastExportFile = ui.lastExportFile,
             lastExportUri = ui.lastExportUri,
+            rosterExporting = ui.rosterExporting,
+            lastRosterFile = ui.lastRosterFile,
             error = ui.error,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReportsUiState())
@@ -155,6 +169,47 @@ class ReportsViewModel @Inject constructor(
     fun onFilter(v: String?) { classFilter.value = v }
     fun onFrom(v: String) { from.value = v }
     fun onTo(v: String) { to.value = v }
+
+    fun exportRoster() {
+        viewModelScope.launch {
+            rosterExporting.value = true
+            error.value = null
+            lastRosterFile.value = null
+            runCatching {
+                rosterExporter.export(classFilter.value)
+            }.onSuccess { result ->
+                lastRosterFile.value = result.file
+                error.value = "Exported ${result.studentCount} students to roster."
+            }.onFailure { t ->
+                error.value = "Roster export failed: ${t.message}"
+            }
+            rosterExporting.value = false
+        }
+    }
+
+    fun importRoster(context: Context, uri: Uri) {
+        viewModelScope.launch {
+            error.value = null
+            runCatching {
+                val rows = com.attendancefr.data.imports.ExcelStudentImporter.read(context, uri)
+                var imported = 0
+                var skipped = 0
+                rows.forEach { row ->
+                    val added = students.importIfNotExists(
+                        studentId = row.rollNumber,
+                        name = row.name,
+                        classNames = if (row.className.isNotBlank()) listOf(row.className) else emptyList()
+                    )
+                    if (added) imported++ else skipped++
+                }
+                "Imported $imported students. $skipped duplicates skipped."
+            }.onSuccess { msg ->
+                error.value = msg
+            }.onFailure { t ->
+                error.value = "Import failed: ${t.message}"
+            }
+        }
+    }
 
     fun export() {
         viewModelScope.launch {

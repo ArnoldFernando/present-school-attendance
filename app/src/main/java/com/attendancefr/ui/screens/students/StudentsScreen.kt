@@ -1,5 +1,8 @@
-package com.attendancefr.ui.screens.students
+ï»¿package com.attendancefr.ui.screens.students
 
+import android.graphics.BitmapFactory
+import android.util.Log
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,12 +48,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.attendancefr.domain.model.Student
 import com.attendancefr.ui.components.EmptyState
 import com.attendancefr.util.DateUtils
+import java.io.File
+import kotlin.math.absoluteValue
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -105,7 +112,6 @@ fun StudentsScreen(
             }
             Spacer(Modifier.height(8.dp))
 
-            // Legend
             LegendRow(
                 completeCount = state.students.count { it.isComplete() },
                 incompleteCount = state.students.count { !it.isComplete() },
@@ -115,7 +121,7 @@ fun StudentsScreen(
             if (state.students.isEmpty()) {
                 EmptyState(
                     title = "No students yet",
-                    body = "Enroll a student with 3–5 face photos to start taking attendance offline.",
+                    body = "Enroll a student with 3-5 face photos to start taking attendance offline.",
                     actionLabel = "Enroll first student",
                     onAction = onAdd,
                 )
@@ -162,11 +168,11 @@ private fun LegendRow(completeCount: Int, incompleteCount: Int) {
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         LegendItem(
-            color = Color(0xFF81C784), // soft green
+            color = Color(0xFF81C784),
             label = "Complete ($completeCount)",
         )
         LegendItem(
-            color = Color(0xFFFFF176), // soft yellow
+            color = Color(0xFFFFF176),
             label = "Incomplete ($incompleteCount)",
         )
     }
@@ -191,6 +197,49 @@ private fun LegendItem(color: Color, label: String) {
 }
 
 @Composable
+private fun StudentPhoto(
+    photoPath: String?,
+    name: String,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 48.dp
+) {
+    val hasPhoto = !photoPath.isNullOrBlank() && File(photoPath).exists()
+    val photoExists = photoPath?.let { File(it).exists() } ?: false
+    Log.d("FaceThumb", "StudentPhoto: path=" + photoPath + ", exists=" + photoExists)
+    if (hasPhoto) {
+        val bitmap = remember(photoPath) {
+            BitmapFactory.decodeFile(photoPath)
+        }
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                modifier = modifier
+                    .size(size)
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop,
+            )
+            return
+        }
+    }
+    val initial = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    val colors = listOf(
+        Color(0xFF1B5E20), Color(0xFF0D47A1), Color(0xFFB71C1C),
+        Color(0xFFE65100), Color(0xFF4A148C), Color(0xFF006064),
+    )
+    val color = remember(name) { colors[name.hashCode().absoluteValue % colors.size] }
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(color),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(initial, color = Color.White, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
 private fun StudentCard(
     student: Student,
     onEdit: () -> Unit,
@@ -199,9 +248,9 @@ private fun StudentCard(
 ) {
     val isComplete = student.isComplete()
     val cardColor = if (isComplete) {
-        Color(0xFF81C784).copy(alpha = 0.25f) // soft green tint
+        Color(0xFF81C784).copy(alpha = 0.25f)
     } else {
-        Color(0xFFFFF176).copy(alpha = 0.35f) // soft yellow tint
+        Color(0xFFFFF176).copy(alpha = 0.35f)
     }
 
     Card(
@@ -215,16 +264,21 @@ private fun StudentCard(
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            StudentPhoto(
+                photoPath = student.photoPath,
+                name = student.name,
+            )
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(student.name, style = MaterialTheme.typography.titleMedium)
                 val classesText = student.classNames.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: student.className
                 Text(
-                    "${student.studentId}  ·  $classesText",
+                    "${student.studentId}  .  $classesText",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "${student.embeddingCount} face shot${if (student.embeddingCount == 1) "" else "s"}  ·  enrolled ${DateUtils.formatDateTime(student.dateEnrolled)}",
+                    "${student.embeddingCount} face shot${if (student.embeddingCount == 1) "" else "s"}  .  enrolled ${DateUtils.formatDateTime(student.dateEnrolled)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -248,3 +302,6 @@ private fun Student.isComplete(): Boolean {
             && (classNames.isNotEmpty() || className.isNotBlank())
             && embeddingCount > 0
 }
+
+
+

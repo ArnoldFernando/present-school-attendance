@@ -1,4 +1,4 @@
-package com.attendancefr.data.local
+﻿package com.attendancefr.data.local
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
@@ -23,7 +23,7 @@ import com.attendancefr.data.local.entity.StudentEntity
         ClassSectionEntity::class,
         StudentClassCrossRef::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -32,9 +32,14 @@ abstract class AttendanceDatabase : RoomDatabase() {
     abstract fun faceEmbeddingDao(): FaceEmbeddingDao
     abstract fun attendanceDao(): AttendanceDao
     abstract fun classSectionDao(): ClassSectionDao
-
-    companion object {
+companion object {
         const val NAME = "attendance_fr.db"
+    }
+}
+
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE students ADD COLUMN photoPath TEXT")
     }
 }
 
@@ -142,3 +147,4 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
         database.execSQL("DELETE FROM attendance_records WHERE className = ''")
     }
 }
+

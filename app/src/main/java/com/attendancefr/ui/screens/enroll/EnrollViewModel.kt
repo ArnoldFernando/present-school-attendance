@@ -1,4 +1,4 @@
-package com.attendancefr.ui.screens.enroll
+ï»¿package com.attendancefr.ui.screens.enroll
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.util.Log
 import javax.inject.Inject
 
 enum class PoseStep(val prompt: String, val expectedYaw: Float) {
@@ -55,6 +56,7 @@ data class EnrollUiState(
     val isImporting: Boolean = false,
     val error: String? = null,
     val modelMissing: Boolean = false,
+    val photoPath: String? = null,
     val saved: Boolean = false,
     val minShots: Int = 3,
     val maxShots: Int = 5,
@@ -214,6 +216,7 @@ class EnrollViewModel @Inject constructor(
                 classes = it.classes,
                 classNames = it.classNames,
                 modelMissing = it.modelMissing,
+                photoPath = null,
                 minShots = it.minShots,
                 maxShots = it.maxShots,
                 students = it.students,
@@ -249,7 +252,7 @@ class EnrollViewModel @Inject constructor(
         val s = _state.value
         if (s.busy || s.shots.size >= s.maxShots) return
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null, hint = "Checking photo…") }
+            _state.update { it.copy(busy = true, error = null, hint = "Checking photoâ€¦") }
             val result = withContext(Dispatchers.Default) {
                 runCatching {
                     val scaled = ImageUtils.downscaleIfNeeded(bitmap, 960)
@@ -272,8 +275,15 @@ class EnrollViewModel @Inject constructor(
                         } else if (QualityAnalyzer.sharpness(scaled, crop) < QualityAnalyzer.MIN_SHARPNESS) {
                             CaptureOutcome.Rejected("Photo looks blurry. Hold still and tap again.")
                         } else {
-                            val embedding = engine.embed(scaled, crop)
-                            CaptureOutcome.Accepted(embedding)
+                                                                            android.util.Log.d("FaceThumb", "photoPath before capture: ${s.photoPath}")
+                        android.util.Log.d("FaceThumb", "photoPath before capture: ${s.photoPath}")
+                        val thumbnailPath = if (s.photoPath == null) {
+                            saveFaceThumbnail(scaled, crop)
+                        } else null
+                        val embedding = engine.embed(scaled, crop)
+                        android.util.Log.d("FaceThumb", "thumbnailPath generated: $thumbnailPath")
+                        android.util.Log.d("FaceThumb", "thumbnailPath generated: $thumbnailPath")
+                        CaptureOutcome.Accepted(embedding, thumbnailPath)
                         }
                     }
                 }.getOrElse { t -> CaptureOutcome.Rejected(t.message ?: "Capture failed.") }
@@ -283,17 +293,19 @@ class EnrollViewModel @Inject constructor(
                     it.copy(busy = false, error = result.reason, hint = result.reason)
                 }
                 is CaptureOutcome.Accepted -> {
-                    val nextShots = s.shots + CapturedShot(s.pose, result.embedding)
+                                                                    val nextShots = s.shots + CapturedShot(s.pose, result.embedding)
+                        val savedPath = s.photoPath ?: result.thumbnailPath
                     val nextPose = nextPose(s.pose, nextShots.size, s.maxShots)
                     _state.update {
-                        it.copy(
-                            busy = false,
-                            shots = nextShots,
-                            pose = nextPose,
-                            hint = if (nextPose == PoseStep.Done)
-                                "All set — tap Save student."
-                            else nextPose.prompt,
+                                            it.copy(
+                        busy = false,
+                        photoPath = savedPath,
                             error = null,
+                        shots = nextShots,
+                        pose = nextPose,
+                        hint = if (nextPose == PoseStep.Done)
+                            "All set â€” tap Save student."
+                        else nextPose.prompt,
                         )
                     }
                 }
@@ -317,10 +329,12 @@ class EnrollViewModel @Inject constructor(
                 val embeddings = s.shots.map { it.embedding }
                 val existing = s.reenrollStudentId
                 if (existing != null) {
-                    students.updateDetails(existing, s.roll, s.name, s.classNames)
-                    students.replaceEmbeddings(existing, embeddings)
+                    students.updateDetails(existing, s.roll, s.name, s.classNames, s.photoPath)
+                    students.replaceEmbeddings(existing, embeddings, s.photoPath)
                 } else {
-                    students.enroll(s.roll, s.name, s.classNames, embeddings)
+                    android.util.Log.d("FaceThumb", "Saving student with photoPath: ${s.photoPath}")
+                    android.util.Log.d("FaceThumb", "Saving student with photoPath: ${s.photoPath}")
+                    students.enroll(s.roll, s.name, s.classNames, embeddings, s.photoPath)
                 }
                 settings.setLastSelectedClass(s.classNames.firstOrNull().orEmpty())
             }.onSuccess {
@@ -330,6 +344,30 @@ class EnrollViewModel @Inject constructor(
             }
         }
     }
+    private fun saveFaceThumbnail(bitmap: android.graphics.Bitmap, faceRect: android.graphics.Rect): String? {
+        return try {
+            val left = faceRect.left.coerceIn(0, bitmap.width - 1)
+            val top = faceRect.top.coerceIn(0, bitmap.height - 1)
+            val width = faceRect.width().coerceAtLeast(1).coerceAtMost(bitmap.width - left)
+            val height = faceRect.height().coerceAtLeast(1).coerceAtMost(bitmap.height - top)
+            val crop = android.graphics.Bitmap.createBitmap(bitmap, left, top, width, height)
+            val thumb = android.graphics.Bitmap.createScaledBitmap(crop, 200, 200, true)
+            val dir = java.io.File(context.filesDir, "face_thumbnails").apply { mkdirs() }
+            val file = java.io.File(dir, "face_${System.currentTimeMillis()}.jpg")
+            file.outputStream().use { out ->
+                thumb.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+            }
+            if (crop !== bitmap) crop.recycle()
+            if (thumb !== bitmap) thumb.recycle()
+            android.util.Log.d("FaceThumb", "Thumbnail saved to: ${file.absolutePath}")
+            file.absolutePath
+        } catch (e: Exception) {
+            android.util.Log.e("FaceThumb", "Failed to save thumbnail", e)
+            null
+        }
+    }
+
+    
 
     private fun nextPose(current: PoseStep, count: Int, max: Int): PoseStep {
         if (count >= max) return PoseStep.Done
@@ -343,10 +381,19 @@ class EnrollViewModel @Inject constructor(
     }
 
     private sealed class CaptureOutcome {
-        data class Accepted(val embedding: FloatArray) : CaptureOutcome()
+        data class Accepted(val embedding: FloatArray, val thumbnailPath: String? = null) : CaptureOutcome()
         data class Rejected(val reason: String) : CaptureOutcome()
     }
 }
+
+
+
+
+
+
+
+
+
 
 
 

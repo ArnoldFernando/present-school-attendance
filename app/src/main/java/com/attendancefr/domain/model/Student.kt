@@ -1,4 +1,4 @@
-package com.attendancefr.domain.model
+﻿package com.attendancefr.domain.model
 
 data class Student(
     val id: Long,
@@ -8,4 +8,5 @@ data class Student(
     val classNames: List<String> = emptyList(),
     val dateEnrolled: Long,
     val embeddingCount: Int = 0,
+    val photoPath: String? = null,
 )

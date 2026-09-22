@@ -1,4 +1,4 @@
-package com.attendancefr.di
+﻿package com.attendancefr.di
 
 import android.content.Context
 import androidx.room.Room
@@ -7,6 +7,7 @@ import com.attendancefr.data.local.MIGRATION_1_2
 import com.attendancefr.data.local.MIGRATION_2_3
 import com.attendancefr.data.local.MIGRATION_3_4
 import com.attendancefr.data.local.MIGRATION_4_5
+import com.attendancefr.data.local.MIGRATION_5_6
 import com.attendancefr.data.local.dao.AttendanceDao
 import com.attendancefr.data.local.dao.ClassSectionDao
 import com.attendancefr.data.local.dao.FaceEmbeddingDao
@@ -29,7 +30,7 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AttendanceDatabase =
         Room.databaseBuilder(context, AttendanceDatabase::class.java, AttendanceDatabase.NAME)
-                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
             .build()
 
     @Provides
@@ -57,3 +58,4 @@ object AppModule {
     @Singleton
     fun provideFaceMatcher(): FaceMatcher = FaceMatcher()
 }
+

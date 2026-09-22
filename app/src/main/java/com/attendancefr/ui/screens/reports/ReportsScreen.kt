@@ -31,6 +31,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,7 +53,6 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReportsScreen(
@@ -62,6 +63,7 @@ fun ReportsScreen(
     val context = LocalContext.current
     var showFromPicker by remember { mutableStateOf(false) }
     var showToPicker by remember { mutableStateOf(false) }
+    val rosterImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> uri?.let { vm.importRoster(context, it) } }
     val isoFormatter = DateTimeFormatter.ISO_LOCAL_DATE
 
     Column(
@@ -76,32 +78,32 @@ fun ReportsScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(8.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.horizontalScroll(rememberScrollState())
-            ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState())
+        ) {
+            FilterChip(
+                selected = state.classFilter == null,
+                onClick = { vm.onFilter(null) },
+                label = { Text("All classes") }
+            )
+            state.classes.forEach { name ->
                 FilterChip(
-                    selected = state.classFilter == null,
-                    onClick = { vm.onFilter(null) },
-                    label = { Text("All classes") }
+                    selected = state.classFilter == name,
+                    onClick = { vm.onFilter(name) },
+                    label = { Text(name) }
                 )
-                state.classes.forEach { name ->
-                    FilterChip(
-                        selected = state.classFilter == name,
-                        onClick = { vm.onFilter(name) },
-                        label = { Text(name) }
-                    )
-                }
             }
+        }
         Spacer(Modifier.height(8.dp))
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(modifier = Modifier.weight(1f)) {
                 OutlinedTextField(
                     value = state.from,
                     onValueChange = {},
                     readOnly = true,
-                    enabled = false,  // prevents the field from consuming clicks
+                    enabled = false,
                     label = { Text("From") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
@@ -199,10 +201,10 @@ fun ReportsScreen(
         }
 
         Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = vm::export, enabled = !state.exporting, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Outlined.FileDownload, contentDescription = null)
-                Text(if (state.exporting) "  Exporting…" else "Export Excel")
+                Text(if (state.exporting) "  Exporting..." else "Export Excel")
             }
             OutlinedButton(
                 onClick = onNavigateToExports,
@@ -225,7 +227,60 @@ fun ReportsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+        Spacer(Modifier.height(12.dp))
+        Text("Class roster", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Export or import student names and IDs for the selected class. No attendance data or face embeddings included.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = vm::exportRoster,
+                enabled = !state.rosterExporting,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Outlined.FileDownload, contentDescription = null)
+                Text(if (state.rosterExporting) "  Exporting..." else "Export roster")
+            }
+            val rosterFile = state.lastRosterFile
+            OutlinedButton(
+                onClick = {
+                    rosterFile?.let {
+                        ShareUtils.shareFile(context, it, "text/csv", "Share class roster")
+                    }
+                },
+                enabled = rosterFile != null,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Outlined.Share, contentDescription = null)
+                Text("Share roster")
+            }
+        }
+        val rosterFileName = state.lastRosterFile
+        if (rosterFileName != null) {
+            Text(
+                "Roster: ${rosterFileName.name}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = { rosterImportLauncher.launch("text/csv") },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Import roster from CSV")
+        }
+
+        state.error?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+
         Spacer(Modifier.height(12.dp))
         if (state.stats.isEmpty()) {
             EmptyState(
@@ -246,7 +301,7 @@ fun ReportsScreen(
                                 stat.student.classNames.takeIf { it.isNotEmpty() }
                                     ?.joinToString(", ") ?: stat.student.className
                             Text(
-                                "${stat.student.studentId}  ·  $classesText",
+                                "${stat.student.studentId}  .  $classesText",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -257,7 +312,7 @@ fun ReportsScreen(
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                "Present ${stat.present}  ·  Late ${stat.late}  ·  Absent ${stat.absent}  ·  ${"%.0f".format(stat.rate)}%",
+                                "Present ${stat.present}  .  Late ${stat.late}  .  Absent ${stat.absent}  .  ${"%.0f".format(stat.rate)}%",
                                 style = MaterialTheme.typography.labelMedium,
                             )
                         }

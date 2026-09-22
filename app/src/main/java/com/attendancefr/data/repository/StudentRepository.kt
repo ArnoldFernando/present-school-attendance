@@ -1,4 +1,4 @@
-package com.attendancefr.data.repository
+﻿package com.attendancefr.data.repository
 
 import com.attendancefr.data.local.EmbeddingCodec
 import com.attendancefr.data.local.dao.EmbeddingCount
@@ -54,6 +54,7 @@ class StudentRepository @Inject constructor(
         name: String,
         classNames: List<String>,
         embeddings: List<FloatArray>,
+        photoPath: String? = null,
         now: Long = System.currentTimeMillis(),
     ): Long {
         val existing = studentDao.getByRoll(studentId)
@@ -67,7 +68,8 @@ class StudentRepository @Inject constructor(
                 name = name.trim(),
                 className = primaryClass,
                 dateEnrolled = now,
-            )
+                photoPath = photoPath,
+        )
         )
         classNames.distinct().forEach { cls ->
             studentDao.insertStudentClass(StudentClassCrossRef(id, cls.trim()))
@@ -105,11 +107,12 @@ class StudentRepository @Inject constructor(
         return true
     }
 
-    suspend fun updateDetails(id: Long, studentId: String, name: String, classNames: List<String>) {
+    suspend fun updateDetails(id: Long, studentId: String, name: String, classNames: List<String>, photoPath: String? = null) {
         val current = studentDao.getById(id) ?: return
         studentDao.update(
             current.copy(
                 studentId = studentId.trim(),
+                photoPath = photoPath ?: current.photoPath,
                 name = name.trim(),
                 className = classNames.firstOrNull()?.trim() ?: current.className,
             )
@@ -120,7 +123,13 @@ class StudentRepository @Inject constructor(
         }
     }
 
-    suspend fun replaceEmbeddings(studentId: Long, embeddings: List<FloatArray>, now: Long = System.currentTimeMillis()) {
+    suspend fun replaceEmbeddings(studentId: Long, embeddings: List<FloatArray>, photoPath: String? = null, now: Long = System.currentTimeMillis()) {
+        if (photoPath != null) {
+            val student = studentDao.getById(studentId)
+            if (student != null) {
+                studentDao.update(student.copy(photoPath = photoPath))
+            }
+        }
         embeddingDao.deleteForStudent(studentId)
         embeddingDao.insertAll(
             embeddings.map { vec ->
@@ -162,6 +171,7 @@ class StudentRepository @Inject constructor(
         classNames = classes.map { it.className },
         dateEnrolled = student.dateEnrolled,
         embeddingCount = count,
+        photoPath = student.photoPath,
     )
 
     private fun StudentEntity.toDomain(count: Int, classes: List<String>) = Student(
@@ -172,6 +182,7 @@ class StudentRepository @Inject constructor(
         classNames = classes,
         dateEnrolled = dateEnrolled,
         embeddingCount = count,
+        photoPath = photoPath,
     )
 
     private fun StudentEntity.toDomain(count: Int) = Student(
@@ -182,7 +193,13 @@ class StudentRepository @Inject constructor(
         classNames = emptyList(),
         dateEnrolled = dateEnrolled,
         embeddingCount = count,
+        photoPath = photoPath,
     )
 }
+
+
+
+
+
 
 
